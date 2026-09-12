@@ -1,0 +1,6 @@
+{
+  "name": "SmartSale AI",
+  "description": "Nền tảng Quản lý Bán hàng & Phân tích Doanh thu Doanh nghiệp Trí tuệ Nhân tạo SmartSale AI",
+  "requestFramePermissions": ["camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
