@@ -83,9 +83,11 @@ async function callGeminiWithTimeout(params: {
   if (!ai) throw new Error("GEMINI_API_KEY is not configured.");
 
   const modelsToTry = [
-    params.preferModel || "gemini-flash-latest",
+    params.preferModel || "gemini-3.6-flash",
+    "gemini-3.6-flash",
+    "gemini-3.5-flash-lite",
+    "gemini-3.8-flash",
     "gemini-flash-latest",
-    "gemini-2.5-flash",
   ];
   const uniqueModels = Array.from(new Set(modelsToTry));
   const timeoutMs = params.timeoutMs || 12000;
@@ -765,19 +767,32 @@ async function startServer() {
         : "Chưa có sản phẩm thật nào trong kho. Không được tự tạo hoặc suy đoán sản phẩm.";
       const orderSummary = summarizeOrdersForAi(orders);
 
-      const systemInstruction = `Bạn là Trợ lý AI Bán hàng & Quản trị Kinh doanh thông minh (SmartShop AI Assistant).
-Bạn có quyền truy cập vào dữ liệu sản phẩm, danh mục, giá cả, tồn kho, khách hàng và chi nhánh sau:
-DANH SÁCH SẢN PHẨM HIỆN TẠI:
+      const systemInstruction = `Bạn là Chuyên viên Tư vấn Bán hàng & Trợ lý Quản trị Kinh doanh Công nghệ cao cấp tại SmartShop (SmartSale AI).
+
+💎 PHONG CÁCH & NHÂN CÁCH GIAO TIẾP (PERSONA & TONE):
+1. Tự nhiên, linh hoạt, duyên dáng, thấu cảm và cực kỳ thông minh. Bạn trò chuyện như một chuyên gia công nghệ nhiệt tình, am hiểu sâu sắc và có tâm tại một showroom điện tử cao cấp, TUYỆT ĐỐI KHÔNG trả lời máy móc, khô khan hay dập khuôn như robot đọc database.
+2. Tinh tế điều chỉnh cách xưng hô và văn phong:
+   - Thân thiện, lịch sự: "Em/Mình/SmartShop" và "Anh/Chị/Bạn".
+   - Luôn lắng nghe nhu cầu ẩn sau câu hỏi của người dùng (ví dụ: mua để đi học, làm văn phòng, chơi game, chụp ảnh, làm quà tặng người thân, hay quản lý cần số liệu kinh doanh).
+   - Đặt câu hỏi gợi mở khéo léo để giúp khách dễ dàng chọn lựa chiếc máy ưng ý nhất.
+3. Không trả lời dập khuôn 1 kiểu:
+   - Tránh việc lúc nào cũng liệt kê gạch đầu dòng 4 mục cứng ngắc. Hãy dùng câu văn mềm mại, so sánh sinh động, phân tích ưu/nhược điểm thực tế (ví dụ: điểm mạnh về màn hình, camera, pin, chip, giá trị giữ giá, hay mẫu nào phù hợp hơn với nhu cầu cụ thể).
+   - Khi người dùng chào hỏi hoặc trò chuyện ngoài lề: Trò chuyện vui vẻ, duyên dáng, tự nhiên dẫn dắt vào công nghệ hoặc hỗ trợ bán hàng.
+
+📦 DỮ LIỆU KHO HÀNG THỰC TẾ CỦA SMARTSHOP:
 ${productListSummary}
 
-DỮ LIỆU ĐƠN HÀNG VÀ DOANH THU:
+📊 DỮ LIỆU BÁO CÁO KINH DOANH:
 ${orderSummary}
 
-NHIỆM VỤ CỦA BẠN:
-1. Trả lời nhanh chóng, chuyên nghiệp và thân thiện bằng tiếng Việt.
-2. Tư vấn sản phẩm, kiểm tra tồn kho chính xác, đề xuất combo hoặc gợi ý sản phẩm phù hợp.
-3. Hỗ trợ tra cứu doanh thu, dự báo bán hàng, tư vấn chính sách khuyến mãi và tối ưu dòng tiền.
-4. Trình bày định dạng Markdown rõ ràng, có điểm nhấn và các con số cụ thể.`;
+🎯 NGUYÊN TẮC TƯ VẤN & XỬ LÝ DỮ LIỆU:
+1. Khi khách hỏi mua / tư vấn thiết bị:
+   - Ưu tiên các sản phẩm đang có sẵn trong kho hàng SmartShop. Báo giá chính xác, thông tin tồn kho thực tế.
+   - Gợi ý combo phụ kiện thông minh (ví dụ mua điện thoại gợi ý dán cường lực + củ sạc nhanh + ốp lưng hoặc tai nghe) để tối ưu trải nghiệm và giúp khách tiết kiệm chi phí.
+   - Nếu khách hỏi sản phẩm chưa có trong kho: Hãy tư vấn kiến thức công nghệ thực tế về dòng sản phẩm đó, đồng thời khéo léo gợi ý các sản phẩm tương đương đang có sẵn tại SmartShop.
+2. Khi chủ shop / thu ngân hỏi về doanh thu, tồn kho, đơn hàng:
+   - Đưa ra phân tích số liệu thông minh, ngắn gọn, kèm nhận định thực tế (ví dụ mặt hàng nào đang bán chạy, mặt hàng nào sắp hết cần nhập gấp, chính sách khuyến mãi nên áp dụng).
+3. Trình bày Markdown trực quan: Sử dụng in đậm, icon tinh tế, chia đoạn mạch lạc, dễ đọc trên cả điện thoại và máy tính.`;
 
       // Build multimodal or text contents
       const parts: any[] = [];
@@ -802,10 +817,10 @@ NHIỆM VỤ CỦA BẠN:
         contents: contentsPayload,
         config: {
           systemInstruction,
-          temperature: 0.7,
+          temperature: 0.75,
         },
-        timeoutMs: 12000,
-        preferModel: "gemini-flash-latest",
+        timeoutMs: 15000,
+        preferModel: "gemini-3.6-flash",
       });
 
       const replyText = geminiResult.text || "Tôi đã nhận được thông tin từ bạn và đang xử lý dữ liệu bán hàng.";
@@ -984,7 +999,7 @@ HÃY PHÂN TÍCH CHUYÊN SÂU VÀ TRẢ VỀ DUY NHẤT 1 ĐỐI TƯỢNG JSON (
             temperature: 0.3,
           },
           timeoutMs: 15000,
-          preferModel: "gemini-flash-latest",
+          preferModel: "gemini-3.6-flash",
         });
 
         const rawText = geminiResult.text || "";
@@ -1145,7 +1160,7 @@ HÃY PHÂN TÍCH VÀ TRẢ VỀ DUY NHẤT MỘT ĐỐI TƯỢNG JSON (KHÔNG K�
                 temperature: 0.1,
               },
               timeoutMs: 15000,
-              preferModel: "gemini-flash-latest",
+              preferModel: "gemini-3.6-flash",
             });
 
             const rawText = geminiResult.text || "";
@@ -1332,7 +1347,7 @@ ${todayOrders.length > 0 ? todayOrders.map((order) => `- ${order.code}: ${Number
     branchesList?: any[],
     ordersList?: any[]
   ): { reply: string; matchedProduct?: any } {
-    const lower = userText.toLowerCase();
+    const lower = userText.toLowerCase().trim();
     const products = Array.isArray(productsList) ? productsList : (getStoreState().products || []);
     const customers = Array.isArray(customersList) ? customersList : [];
     const completedOrders = (Array.isArray(ordersList) ? ordersList : []).filter((order: any) => order.status === 'completed');
@@ -1341,16 +1356,34 @@ ${todayOrders.length > 0 ? todayOrders.map((order) => `- ${order.code}: ${Number
     const todayRevenue = todayOrders.reduce((sum: number, order: any) => sum + Number(order.total || 0), 0);
     const allRevenue = completedOrders.reduce((sum: number, order: any) => sum + Number(order.total || 0), 0);
 
-    // 1. Revenue & Sales Queries
-    if (lower.includes("doanh thu") || lower.includes("hôm nay") || lower.includes("bán được") || lower.includes("doanh số")) {
+    // 1. Social Greetings & Friendly Small Talk
+    if (/^(chào|xin chào|hi|hello|alo|ad ơi|shop ơi|em ơi|anh ơi|có ai không|bạn là ai|ai đó)/i.test(lower) || lower === "chào" || lower === "hi") {
       return {
-        reply: todayOrders.length > 0
-          ? `📊 **Báo cáo Doanh thu Hôm nay (${todayKey}):**\n- Doanh thu: **${todayRevenue.toLocaleString('vi-VN')}đ**\n- Số đơn hoàn tất: **${todayOrders.length} hóa đơn**\n- Tổng tích lũy toàn hệ thống: **${allRevenue.toLocaleString('vi-VN')}đ** (${completedOrders.length} đơn).\n\n*Dữ liệu được trích xuất trực tiếp từ cơ sở dữ liệu SQLite của SmartShop.*`
-          : `📊 **Báo cáo Doanh thu:**\nHôm nay (${todayKey}) chưa phát sinh đơn hoàn tất mới. Tổng doanh thu lũy kế toàn hệ thống hiện đạt **${allRevenue.toLocaleString('vi-VN')}đ** từ **${completedOrders.length} đơn hoàn tất**.`,
+        reply: `Dạ em chào anh/chị ạ! Rất vui được đồng hành cùng anh/chị tại **SmartShop**. 😊
+
+Em là **Trợ lý Công nghệ & Quản trị SmartSale AI**. Anh/chị đang cần em hỗ trợ gì hôm nay ạ:
+- 📱 **Tư vấn chọn máy:** Tìm smartphone, laptop, tai nghe hay phụ kiện phù hợp theo ngân sách và nhu cầu (học tập, làm việc, chụp ảnh hay chơi game)?
+- 📊 **Kiểm tra kinh doanh:** Xem doanh thu, đơn hàng, khách VIP hay cảnh báo hàng sắp hết trong kho?
+
+Anh/chị cứ chia sẻ tự nhiên nhé, em sẵn sàng tư vấn chi tiết ngay ạ!`,
       };
     }
 
-    // 2. Inventory & Stock Alerts
+    // 2. Revenue & Sales Queries
+    if (lower.includes("doanh thu") || lower.includes("hôm nay") || lower.includes("bán được") || lower.includes("doanh số")) {
+      return {
+        reply: todayOrders.length > 0
+          ? `📊 **Tình hình Doanh thu SmartShop Hôm nay (${todayKey}):**\n\n` +
+            `Hôm nay cửa hàng đã ghi nhận **${todayOrders.length} đơn hoàn tất**, mang về tổng doanh thu **${todayRevenue.toLocaleString('vi-VN')}đ**.\n` +
+            `Tính chung toàn bộ lịch sử hệ thống, chúng ta đã đạt **${allRevenue.toLocaleString('vi-VN')}đ** với **${completedOrders.length} đơn hàng** thành công.\n\n` +
+            `💡 *Gợi ý cho thu ngân & quản lý:* Các khung giờ cao điểm buổi chiều/tối thường có lượng khách mua phụ kiện tăng cao, hãy chủ động tư vấn combo sạc nhanh và dán màn hình để gia tăng thêm giá trị trên mỗi đơn hàng nhé!`
+          : `📊 **Báo cáo Doanh thu Hôm nay (${todayKey}):**\n\n` +
+            `Hôm nay cửa hàng chưa phát sinh đơn hàng hoàn tất mới. Tổng doanh thu lũy kế toàn hệ thống hiện đạt **${allRevenue.toLocaleString('vi-VN')}đ** từ **${completedOrders.length} đơn hoàn tất** trước đó.\n\n` +
+            `💪 Chúc đội ngũ bán hàng hôm nay bùng nổ doanh số! Em luôn sẵn sàng hỗ trợ tra cứu giá và tạo đơn thanh toán nhanh tại quầy POS.`,
+      };
+    }
+
+    // 3. Inventory & Stock Alerts
     if (lower.includes("tồn kho") || lower.includes("hết hàng") || lower.includes("còn hàng") || lower.includes("nhập hàng") || lower.includes("sắp hết")) {
       const lowStock = products.filter((p: any) => Number(p.stock || 0) > 0 && Number(p.stock || 0) <= 5).slice(0, 8);
       const outOfStock = products.filter((p: any) => Number(p.stock || 0) === 0).slice(0, 8);
@@ -1358,79 +1391,99 @@ ${todayOrders.length > 0 ? todayOrders.map((order) => `- ${order.code}: ${Number
 
       return {
         reply: products.length === 0
-          ? '📦 Kho hàng hiện chưa có dữ liệu sản phẩm.'
-          : `📦 **Báo cáo Tồn kho & Cảnh báo Hàng hóa:**
-- **Tổng số lượng thiết bị trong kho:** ${totalUnits.toLocaleString('vi-VN')} máy / phụ kiện (${products.length} mã).
-- ⚠️ **Sắp hết hàng (tồn ≤ 5):** ${lowStock.length > 0 ? lowStock.map((p: any) => `**${p.name}** (còn ${p.stock})`).join(', ') : 'Không có mặt hàng nào.'}
-- 🚨 **Hết hàng (tồn 0):** ${outOfStock.length > 0 ? outOfStock.map((p: any) => `**${p.name}**`).join(', ') : 'Không có mặt hàng nào.'}
-
-💡 *Khuyến nghị: Bạn có thể vào mục "Nhập hàng" để lập phiếu nhập bổ sung cho các mặt hàng sắp hết.*`,
+          ? '📦 Kho hàng hiện chưa có dữ liệu sản phẩm. Bạn có thể vào mục "Sản phẩm" để thêm mới mặt hàng.'
+          : `📦 **Báo cáo Tồn kho & Cảnh báo Hàng hóa tức thời:**\n\n` +
+            `- **Tổng lượng máy & phụ kiện trong kho:** Hiện có **${totalUnits.toLocaleString('vi-VN')} thiết bị** (${products.length} danh mục sản phẩm).\n` +
+            `- ⚠️ **Cảnh báo hàng sắp hết (tồn kho ≤ 5):** ${lowStock.length > 0 ? lowStock.map((p: any) => `**${p.name}** (còn ${p.stock} máy)`).join(', ') : 'Tất cả mặt hàng đều ở mức an toàn.'}\n` +
+            `- 🚨 **Đã hết hàng (tồn 0):** ${outOfStock.length > 0 ? outOfStock.map((p: any) => `**${p.name}**`).join(', ') : 'Không có mặt hàng nào bị đứt kho.'}\n\n` +
+            `💡 *Lời khuyên quản lý:* Anh/chị có thể vào trực tiếp tab **"Nhập hàng"** để lập phiếu nhập hàng ngay, tránh gián đoạn các đơn bán chạy tại quầy POS nhé!`,
         matchedProduct: lowStock[0] || outOfStock[0] || undefined,
       };
     }
 
-    // 3. Customer & VIP Queries
+    // 4. Customer & VIP Queries
     if (lower.includes("khách hàng") || lower.includes("vip") || lower.includes("thành viên")) {
       const vipCustomers = customers.filter((c: any) => (c.totalSpent || 0) > 20000000 || c.loyaltyTier === 'VIP');
       return {
         reply: customers.length > 0
-          ? `👥 **Thống kê Khách hàng SmartShop:**
-- Tổng khách hàng đã lưu hồ sơ: **${customers.length} khách hàng**.
-- Nhóm khách hàng VIP / Thân thiết: **${vipCustomers.length} thành viên**.
-- Tích điểm thành viên: Giảm 5% cho đơn tiếp theo hoặc bảo hành mở rộng 18 tháng.`
-          : 'Hiện chưa có hồ sơ khách hàng nào trong hệ thống. Bạn có thể thêm khách hàng mới trực tiếp tại màn hình Bán hàng POS.',
+          ? `👥 **Chăm sóc Khách hàng & Thành viên VIP SmartShop:**\n\n` +
+            `- **Tổng số khách đã lưu hồ sơ:** **${customers.length} khách hàng**.\n` +
+            `- **Hạng VIP / Thân thiết:** **${vipCustomers.length} thành viên** (doanh số tích lũy trên 20 triệu).\n` +
+            `- **Đặc quyền VIP đề xuất:** Giảm ngay 5% hóa đơn tiếp theo, tặng dán cường lực miễn phí trọn đời máy và ưu tiên chính sách bảo hành 1-đổi-1.\n\n` +
+            `Anh/chị có thể tra cứu nhanh lịch sử mua hàng của từng khách ngay trên quầy POS khi tạo hóa đơn.`
+          : 'Hiện hệ thống chưa ghi nhận hồ sơ khách hàng nào. Thu ngân có thể thêm nhanh thông tin khách hàng mới trực tiếp tại màn hình Bán hàng POS.',
       };
     }
 
-    // 4. Cross-sell / Combo Queries
+    // 5. Cross-sell / Combo Queries
     if (lower.includes("bán kèm") || lower.includes("combo") || lower.includes("cross-sell") || lower.includes("upsell") || lower.includes("mua kèm")) {
       const accessory = products.find((p: any) => /phụ kiện|tai nghe|sạc|airpods/i.test(p.category || "") || /airpods|sạc|tai nghe/i.test(p.name || ""));
       const flagship = products.find((p: any) => /iphone|galaxy|macbook/i.test(p.name || ""));
 
       return {
-        reply: `💡 **Chiến lược Bán chéo (Cross-sell / Combo) Đề xuất:**
-1. **Combo Thiết bị Chính + Phụ kiện:**
-   - Khi khách chọn mua ${flagship ? `**${flagship.name}**` : 'Điện thoại / Laptop'}, nhân viên nên gợi ý ngay gói sạc nhanh 30W và tai nghe chống ồn.
-   ${accessory ? `- Sản phẩm bán kèm tối ưu: **${accessory.name}** (Giá: **${Number(accessory.price || 0).toLocaleString('vi-VN')}đ**).` : ''}
-2. **Ưu đãi Combo:** Giảm ngay 10% giá phụ kiện khi thanh toán trong cùng 1 hóa đơn, vừa tăng giá trị đơn hàng (AOV), vừa kích cầu tồn kho phụ kiện.`,
+        reply: `💡 **Bí quyết Tư vấn Combo Bán chéo (Cross-sell) Hiệu quả cao:**\n\n` +
+          `1. **Kịch bản ghép combo thông minh:**\n` +
+          `   - Khi khách hàng chốt ${flagship ? `**${flagship.name}**` : 'điện thoại hoặc laptop'}, hãy khéo léo gợi ý: *"Dạ máy mới chưa kèm củ sạc nhanh và tai nghe chống ồn, hôm nay shop đang có ưu đãi giảm 10% khi mua kèm phụ kiện, em lấy luôn cho mình trải nghiệm trọn vẹn nhé!"*\n` +
+          `${accessory ? `   - Sản phẩm bán kèm vàng trong kho: **${accessory.name}** (Giá: **${Number(accessory.price || 0).toLocaleString('vi-VN')}đ**).\n` : ''}` +
+          `2. **Lợi ích kép:**\n` +
+          `   - Khách hàng được phục vụ chu đáo, đầy đủ phụ kiện bảo vệ máy ngay khi mở hộp.\n` +
+          `   - Cửa hàng tăng ngay giá trị đơn hàng trung bình (AOV) và đẩy nhanh vòng quay tồn kho phụ kiện có biên lợi nhuận cao.`,
         matchedProduct: accessory || flagship || undefined,
       };
     }
 
-    // 5. Product Consultation / Budget Filtering
+    // 6. Specific Needs / Personas (Gaming, Photography, Student, Work)
+    const isStudent = lower.includes("học sinh") || lower.includes("sinh viên") || lower.includes("học tập") || lower.includes("giá rẻ");
+    const isGaming = lower.includes("chơi game") || lower.includes("gaming") || lower.includes("game");
+    const isCamera = lower.includes("chụp ảnh") || lower.includes("quay phim") || lower.includes("chụp hình") || lower.includes("camera") || lower.includes("sống ảo");
+    const isOffice = lower.includes("văn phòng") || lower.includes("công việc") || lower.includes("làm việc") || lower.includes("pin trâu");
+
     const matchedProduct = findMatchingProduct(userText, products);
     const budget = extractBudgetFromText(lower);
 
     if (matchedProduct) {
       const inStock = Number(matchedProduct.stock || 0) > 0;
-      const budgetNote = budget ? ` phù hợp với ngân sách dưới **${budget.toLocaleString('vi-VN')}đ** của bạn:` : ':';
+      const formattedPrice = Number(matchedProduct.price || 0).toLocaleString('vi-VN') + 'đ';
+
+      let personalizedIntro = `Dạ chào bạn! Nếu bạn đang cân nhắc`;
+      if (budget) {
+        personalizedIntro = `Dạ tuyệt vời! Với ngân sách dưới **${budget.toLocaleString('vi-VN')}đ**, bạn đang ở tầm giá có rất nhiều lựa chọn chất lượng. Trong kho của SmartShop thì chiếc máy này chính là **"chân ái"** sáng giá nhất:`;
+      } else if (isStudent) {
+        personalizedIntro = `Dạ với nhu cầu học tập của các bạn học sinh, sinh viên (cần máy bền, pin khỏe, giá hợp lý), em xin đề xuất chiếc máy cực kỳ thực dụng này:`;
+      } else if (isGaming) {
+        personalizedIntro = `Dạ nếu bạn cần một chiếc máy hiệu năng mạnh mẽ để chiến game mượt mà, màn hình tần số quét cao thì em xin giới thiệu ngay em máy này:`;
+      } else if (isCamera) {
+        personalizedIntro = `Dạ mê chụp ảnh và quay video sống ảo thì bạn không thể bỏ qua "ngôi sao" camera này trong kho của shop:`;
+      } else if (isOffice) {
+        personalizedIntro = `Dạ với nhu cầu làm việc văn phòng, cần máy sang trọng, pin dùng cả ngày dài và hỗ trợ đa nhiệm mượt mà, mẫu máy này là gợi ý hàng đầu:`;
+      } else {
+        personalizedIntro = `Dạ em đã kiểm tra kho và tìm thấy một mẫu máy cực kỳ phù hợp với nhu cầu của bạn:`;
+      }
 
       return {
-        reply: `📱 **Tư vấn Sản phẩm Đề xuất**${budgetNote}
-
-- **${matchedProduct.name}**
-- 🏷️ **Giá niêm yết:** **${Number(matchedProduct.price || 0).toLocaleString('vi-VN')}đ**
-- 📦 **Tình trạng:** ${inStock ? `Còn hàng (**${matchedProduct.stock} cái** trong kho)` : '⚠️ Tạm thời hết hàng (có thể đặt trước)'}
-- 📂 **Danh mục:** ${matchedProduct.category || 'Thiết bị điện tử'}
-
-💡 **Chính sách ưu đãi:**
-- Bảo hành 12 tháng chính hãng, 1-đổi-1 trong 30 ngày nếu có lỗi phần cứng từ nhà sản xuất.
-- Hỗ trợ thanh toán nhanh bằng VietQR động trực tiếp tại quầy POS.
-- Tặng voucher giảm 10% khi mua kèm phụ kiện (ốp lưng, cường lực, củ sạc nhanh).`,
+        reply: `${personalizedIntro}\n\n` +
+          `🌟 **${matchedProduct.name}**\n` +
+          `- 🏷️ **Mức giá ưu đãi tại shop:** **${formattedPrice}**\n` +
+          `- 📦 **Tình trạng:** ${inStock ? `Đang có sẵn **${matchedProduct.stock} máy** tại cửa hàng (giao ngay)` : '⚠️ Tạm thời hết hàng sẵn, shop hỗ trợ đặt nhập kho ưu tiên trong 24h'}\n` +
+          `- 📂 **Phân khúc:** ${matchedProduct.category || 'Thiết bị công nghệ chính hãng'}\n\n` +
+          `💎 **Vì sao chiếc máy này rất đáng tiền:**\n` +
+          `- Thiết kế thời thượng, cầm đầm tay, màn hình sắc nét cho trải nghiệm thị giác mượt mà.\n` +
+          `- Cấu hình tối ưu tốt cho mọi tác vụ thường nhật từ lướt web, học tập đến giải trí.\n` +
+          `- Hưởng trọn gói **Bảo hành 12 tháng chính hãng**, cam kết 1-đổi-1 trong 30 ngày nếu phát sinh lỗi nhà sản xuất.\n` +
+          `- Hỗ trợ thanh toán linh hoạt: Tiền mặt, Quẹt thẻ, hoặc quét mã VietQR tự động tại quầy POS.\n\n` +
+          `💬 *Bạn có muốn em tư vấn thêm về màu sắc yêu thích hoặc các gói phụ kiện bảo vệ đi kèm (sạc nhanh, ốp lưng, tai nghe) không ạ?*`,
         matchedProduct,
       };
     }
 
-    // 6. Default Welcome / Overview
+    // 7. General Technology Advice / Natural Fallback
     return {
-      reply: `Tôi là **Trợ lý Bán hàng & Phân tích SmartSale AI**. Tôi có thể hỗ trợ bạn:
-- 📱 **Tư vấn sản phẩm:** Tra cứu sản phẩm theo ngân sách (vd: *"Tư vấn cho tôi điện thoại dưới 15 triệu"* hoặc *"Có laptop nào dưới 40 triệu"*).
-- 📊 **Kinh doanh & Doanh thu:** Xem doanh thu và đơn hàng hôm nay (vd: *"Doanh thu hôm nay thế nào?"*).
-- 📦 **Kho bãi & Tồn kho:** Cảnh báo hàng sắp hết, hết hàng (vd: *"Kiểm tra tồn kho sản phẩm"*).
-- 🛒 **Bán kèm & Combo:** Gợi ý kịch bản cross-sell cho thu ngân tại quầy.
-- 👥 **Khách hàng:** Tra cứu danh sách khách hàng VIP và chính sách tích điểm.
-
-Bạn cần tôi hỗ trợ kiểm tra thông tin gì ngay bây giờ?`,
+      reply: `Dạ em luôn sẵn sàng hỗ trợ anh/chị đây ạ! 😊\n\n` +
+        `Để em tư vấn đúng gu và sát nhất với nhu cầu, anh/chị có thể chia sẻ thêm cho em một chút thông tin nhé:\n` +
+        `- 🎯 **Nhu cầu sử dụng chính:** Anh/chị dùng để làm việc, học tập, chụp ảnh du lịch hay chơi game giải trí?\n` +
+        `- 💰 **Mức ngân sách dự kiến:** Anh/chị muốn tìm máy trong tầm giá nào (ví dụ: *dưới 10 triệu*, *tầm 15 triệu*, hay *phân khúc cao cấp trên 30 triệu*)?\n` +
+        `- 🍏 **Thương hiệu yêu thích:** Anh/chị đang quen dùng Apple iPhone, Samsung Galaxy, MacBook hay các dòng máy khác ạ?\n\n` +
+        `Chỉ cần anh/chị nhắn cho em biết mong muốn, em sẽ gợi ý ngay chiếc máy "chuẩn chỉnh" nhất kèm ưu đãi hiện có tại SmartShop nhé!`,
     };
   }
 
