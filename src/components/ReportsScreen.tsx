@@ -17,26 +17,6 @@ import {
 import { Product, Order } from '../types';
 import { useLanguage } from '../utils/i18n';
 
-const REVENUE_BY_DAY_VI = [
-  { day: 'T2 (10/08)', short: 'T2', revenue: 14200000, profit: 3400000, orders: 12 },
-  { day: 'T3 (11/08)', short: 'T3', revenue: 18500000, profit: 4600000, orders: 16 },
-  { day: 'T4 (12/08)', short: 'T4', revenue: 16800000, profit: 3900000, orders: 14 },
-  { day: 'T5 (13/08)', short: 'T5', revenue: 22400000, profit: 5800000, orders: 21 },
-  { day: 'T6 (14/08)', short: 'T6', revenue: 31200000, profit: 8200000, orders: 29 },
-  { day: 'T7 (15/08)', revenue: 45600000, profit: 12400000, orders: 42 },
-  { day: 'CN (16/08)', revenue: 38900000, profit: 10100000, orders: 36 },
-];
-
-const REVENUE_BY_DAY_EN = [
-  { day: 'Mon (10/08)', short: 'Mon', revenue: 14200000, profit: 3400000, orders: 12 },
-  { day: 'Tue (11/08)', short: 'Tue', revenue: 18500000, profit: 4600000, orders: 16 },
-  { day: 'Wed (12/08)', short: 'Wed', revenue: 16800000, profit: 3900000, orders: 14 },
-  { day: 'Thu (13/08)', short: 'Thu', revenue: 22400000, profit: 5800000, orders: 21 },
-  { day: 'Fri (14/08)', short: 'Fri', revenue: 31200000, profit: 8200000, orders: 29 },
-  { day: 'Sat (15/08)', short: 'Sat', revenue: 45600000, profit: 12400000, orders: 42 },
-  { day: 'Sun (16/08)', short: 'Sun', revenue: 38900000, profit: 10100000, orders: 36 },
-];
-
 interface ReportProps {
   products: Product[];
   orders?: Order[];
@@ -48,11 +28,34 @@ export const RevenueReportScreen: React.FC<ReportProps> = ({ products, orders = 
   const { language, t, formatCurr } = useLanguage();
   const [timeRange, setTimeRange] = useState<'7d' | '30d' | 'quarter'>('7d');
 
-  const dataList = language === 'vi' ? REVENUE_BY_DAY_VI : REVENUE_BY_DAY_EN;
+  const completedOrders = orders.filter((order) => order.status === 'completed');
+  const latestOrderDate = completedOrders.reduce((latest, order) => {
+    const date = new Date(order.createdAt.replace(' ', 'T'));
+    return date > latest ? date : latest;
+  }, new Date(0));
+  const referenceDate = latestOrderDate.getTime() > 0 ? latestOrderDate : new Date();
+  const rangeDays = timeRange === '7d' ? 7 : timeRange === '30d' ? 30 : 90;
+  const cutoff = new Date(referenceDate);
+  cutoff.setDate(cutoff.getDate() - rangeDays + 1);
+  const filteredOrders = completedOrders.filter((order) => new Date(order.createdAt.replace(' ', 'T')) >= cutoff);
+  const dataList = Array.from({ length: Math.min(rangeDays, 7) }, (_, index) => {
+    const date = new Date(referenceDate);
+    date.setDate(referenceDate.getDate() - (Math.min(rangeDays, 7) - index - 1));
+    const dayOrders = filteredOrders.filter((order) => new Date(order.createdAt.replace(' ', 'T')).toDateString() === date.toDateString());
+    const revenue = dayOrders.reduce((sum, order) => sum + order.total, 0);
+    const profit = dayOrders.reduce((sum, order) => sum + order.items.reduce((itemSum, item) => itemSum + (item.product.price - item.product.costPrice) * item.quantity, 0), 0);
+    return {
+      day: date.toLocaleDateString(language === 'vi' ? 'vi-VN' : 'en-US', { weekday: 'short', day: '2-digit', month: '2-digit' }),
+      short: date.toLocaleDateString(language === 'vi' ? 'vi-VN' : 'en-US', { weekday: 'short' }),
+      revenue,
+      profit,
+      orders: dayOrders.length,
+    };
+  });
   const totalWeeklyRev = dataList.reduce((a, b) => a + b.revenue, 0);
   const totalWeeklyProfit = dataList.reduce((a, b) => a + b.profit, 0);
-  const profitMargin = ((totalWeeklyProfit / totalWeeklyRev) * 100).toFixed(1);
-  const maxRevenue = Math.max(...dataList.map((d) => d.revenue));
+  const profitMargin = totalWeeklyRev > 0 ? ((totalWeeklyProfit / totalWeeklyRev) * 100).toFixed(1) : '0.0';
+  const maxRevenue = Math.max(1, ...dataList.map((d) => d.revenue));
 
   return (
     <div className="p-6 space-y-6 max-w-7xl mx-auto">
@@ -63,7 +66,7 @@ export const RevenueReportScreen: React.FC<ReportProps> = ({ products, orders = 
               {t.revenueReportTitle}
             </h1>
             <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300">
-              Live Data
+              {filteredOrders.length > 0 ? 'Live Data' : language === 'vi' ? 'Chưa có dữ liệu' : 'No data'}
             </span>
           </div>
           <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400 mt-1">
@@ -153,10 +156,10 @@ export const RevenueReportScreen: React.FC<ReportProps> = ({ products, orders = 
             {t.averageOrderValue} (AOV)
           </span>
           <p className="text-2xl font-extrabold text-purple-600 dark:text-purple-400 mt-2">
-            {formatCurr(totalWeeklyRev / 170)}
+            {formatCurr(filteredOrders.length > 0 ? totalWeeklyRev / filteredOrders.length : 0)}
           </p>
           <div className="flex items-center gap-1 text-xs text-purple-600 dark:text-purple-400 font-medium mt-1">
-            <span>{language === 'vi' ? 'Tổng số 170 đơn thanh toán thành công' : '170 successful orders in total'}</span>
+            <span>{language === 'vi' ? `Tổng số ${filteredOrders.length} đơn thanh toán thành công` : `${filteredOrders.length} successful orders in total`}</span>
           </div>
         </div>
       </div>
@@ -233,15 +236,26 @@ export const RevenueReportScreen: React.FC<ReportProps> = ({ products, orders = 
 };
 
 // 2. ANALYTICS REPORT SCREEN
-export const AnalyticsReportScreen: React.FC<ReportProps> = ({ products, isDark }) => {
+export const AnalyticsReportScreen: React.FC<ReportProps> = ({ products, orders = [], isDark }) => {
   const { language, t, formatCurr } = useLanguage();
 
-  const categoryShare = [
-    { name: t.catPhones, value: 55, color: '#2563eb' },
-    { name: t.catLaptops, value: 25, color: '#4f46e5' },
-    { name: t.catAccessories, value: 12, color: '#06b6d4' },
-    { name: t.catFashion, value: 8, color: '#10b981' },
-  ];
+  const categoryTotals = orders
+    .filter((order) => order.status === 'completed')
+    .flatMap((order) => order.items)
+    .reduce<Record<string, number>>((totals, item) => {
+      totals[item.product.category] = (totals[item.product.category] || 0) + item.product.price * item.quantity;
+      return totals;
+    }, {});
+  const totalCategoryRevenue = Object.values(categoryTotals).reduce((sum, value) => sum + value, 0);
+  const categoryShare = Object.entries(categoryTotals)
+    .sort(([, first], [, second]) => second - first)
+    .slice(0, 4)
+    .map(([name, value], index) => ({
+      name,
+      value: totalCategoryRevenue > 0 ? Math.round((value / totalCategoryRevenue) * 100) : 0,
+      color: ['#2563eb', '#4f46e5', '#06b6d4', '#10b981'][index],
+    }));
+  const topProducts = [...products].sort((first, second) => (second.soldCount || 0) - (first.soldCount || 0)).slice(0, 5);
 
   return (
     <div className="p-6 space-y-6 max-w-7xl mx-auto">
@@ -311,7 +325,7 @@ export const AnalyticsReportScreen: React.FC<ReportProps> = ({ products, isDark 
           </p>
 
           <div className="space-y-3">
-            {products.slice(0, 5).map((prod, idx) => {
+            {topProducts.map((prod, idx) => {
               const profitPerUnit = prod.price - prod.costPrice;
               const margin = ((profitPerUnit / prod.price) * 100).toFixed(0);
               return (
@@ -326,7 +340,7 @@ export const AnalyticsReportScreen: React.FC<ReportProps> = ({ products, isDark 
                     <div>
                       <p className="font-bold text-slate-900 dark:text-white">{prod.name}</p>
                       <span className="text-slate-400">
-                        {language === 'vi' ? `Đã bán: ${prod.soldCount || 20} cái` : `Sold: ${prod.soldCount || 20} units`}
+                        {language === 'vi' ? `Đã bán: ${prod.soldCount || 0} cái` : `Sold: ${prod.soldCount || 0} units`}
                       </span>
                     </div>
                   </div>

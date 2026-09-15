@@ -155,6 +155,24 @@ export interface RestockOrder {
   status: 'completed' | 'in_transit' | 'pending';
 }
 
+export interface ReturnRecord {
+  id: string;
+  orderId: string;
+  createdAt: string;
+  reason: string;
+  total: number;
+  status: 'pending_refund' | 'refunded' | 'rejected';
+}
+
+export interface WarrantyClaim {
+  id: string;
+  orderId: string;
+  productId: string;
+  createdAt: string;
+  issue: string;
+  status: 'pending' | 'in_progress' | 'completed' | 'rejected';
+}
+
 export interface StaffUser {
   id: string;
   name: string;
@@ -164,6 +182,27 @@ export interface StaffUser {
   status: 'active' | 'inactive';
   branch: string;
   avatar?: string;
+}
+
+export interface PermissionAuditEntry {
+  id: string;
+  actorId: string;
+  actorName: string;
+  action: 'update' | 'reset';
+  changedRoles: string[];
+  changedModules: string[];
+  createdAt: string;
+}
+
+export interface StaffAuditEntry {
+  id: string;
+  actorId: string;
+  actorName: string;
+  action: 'create' | 'update' | 'activate' | 'deactivate' | 'delete' | 'permission_update' | 'permission_reset' | 'impersonate';
+  targetId?: string;
+  targetName?: string;
+  details?: string;
+  createdAt: string;
 }
 
 export type MainTab =

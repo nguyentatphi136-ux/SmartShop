@@ -3,8 +3,60 @@ import path from "path";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
 import dotenv from "dotenv";
+import { randomInt, randomBytes } from "crypto";
+import * as nodemailer from "nodemailer";
+import {
+  addStoreProduct,
+  addStoreStaff,
+  checkoutStoreOrder,
+  cleanExpiredStoreSessions,
+  clearBusinessData,
+  createReturnRecord,
+  createStoreSession,
+  createWarrantyClaim,
+  deleteStoreProduct,
+  deleteStoreSession,
+  deleteStoreStaff,
+  getStoreSession,
+  getStoreState,
+  replaceStoreState,
+  receiveRestockOrder,
+  restockStoreProduct,
+  updateStoreProduct,
+  updateStoreStaff,
+} from "./src/server/store";
 
 dotenv.config();
+
+function createMailTransporter() {
+  const user = process.env.SMTP_USER;
+  const pass = process.env.SMTP_PASSWORD;
+  if (!user || !pass) return null;
+
+  const isGmail =
+    (process.env.SMTP_HOST && process.env.SMTP_HOST.includes("gmail")) ||
+    user.includes("@gmail.com");
+
+  if (isGmail) {
+    return nodemailer.createTransport({
+      service: "gmail",
+      auth: { user, pass },
+      connectionTimeout: 8000,
+      greetingTimeout: 8000,
+      socketTimeout: 12000,
+    });
+  }
+
+  return nodemailer.createTransport({
+    host: process.env.SMTP_HOST || "localhost",
+    port: Number(process.env.SMTP_PORT || 587),
+    secure: process.env.SMTP_SECURE === "true",
+    auth: { user, pass },
+    connectionTimeout: 8000,
+    greetingTimeout: 8000,
+    socketTimeout: 12000,
+  });
+}
 
 let aiClient: GoogleGenAI | null = null;
 function getGenAI(): GoogleGenAI | null {
@@ -21,11 +73,66 @@ function getGenAI(): GoogleGenAI | null {
   return aiClient;
 }
 
+async function callGeminiWithTimeout(params: {
+  contents: any;
+  config?: any;
+  timeoutMs?: number;
+  preferModel?: string;
+}): Promise<{ text: string; modelUsed: string }> {
+  const ai = getGenAI();
+  if (!ai) throw new Error("GEMINI_API_KEY is not configured.");
+
+  const modelsToTry = [
+    params.preferModel || "gemini-flash-latest",
+    "gemini-flash-latest",
+    "gemini-2.5-flash",
+  ];
+  const uniqueModels = Array.from(new Set(modelsToTry));
+  const timeoutMs = params.timeoutMs || 12000;
+
+  for (const model of uniqueModels) {
+    try {
+      let timer: any = null;
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`Timeout after ${timeoutMs}ms on model ${model}`)), timeoutMs);
+      });
+
+      const generatePromise = ai.models.generateContent({
+        model,
+        contents: params.contents,
+        config: params.config,
+      });
+
+      const response: any = await Promise.race([generatePromise, timeoutPromise]);
+      if (timer) clearTimeout(timer);
+      const text = response?.text || "";
+      if (text) {
+        return { text, modelUsed: model };
+      }
+    } catch (err: any) {
+      console.warn(`[SmartShop AI] Model ${model} attempt failed:`, err?.message || err?.status || err);
+    }
+  }
+
+  throw new Error("Tất cả các model Gemini đều không phản hồi hoặc đã hết thời gian chờ.");
+}
+
 async function startServer() {
   const app = express();
   const PORT = 3000;
 
   app.use(express.json({ limit: "10mb" }));
+
+  // Clean expired SQLite sessions on boot & schedule hourly cleanup
+  try {
+    const cleaned = cleanExpiredStoreSessions();
+    if (cleaned > 0) console.log(`[SmartShop Auth] Cleaned ${cleaned} expired sessions on startup.`);
+  } catch (e) {}
+  setInterval(() => {
+    try {
+      cleanExpiredStoreSessions();
+    } catch (e) {}
+  }, 60 * 60 * 1000);
 
   // API Routes
   app.get("/api/health", (req, res) => {
@@ -239,32 +346,89 @@ async function startServer() {
   const verificationStore = new Map<string, VerificationEntry>();
 
   // Send verification code to email
-  app.post("/api/auth/send-verification-code", (req, res) => {
+  app.post("/api/auth/send-verification-code", async (req, res) => {
     const email = req.body?.email ? String(req.body.email).trim().toLowerCase() : "";
     if (!email || !email.includes("@")) {
       return res.status(400).json({ error: "Email không hợp lệ. Vui lòng nhập đúng định dạng email." });
     }
 
-    // Generate secure 6-digit numeric OTP code
-    const code = Math.floor(100000 + Math.random() * 900000).toString();
+    const staff = getStoreState().staffList.find((candidate) => candidate.email.toLowerCase() === email);
+    if (!staff || staff.status !== "active") {
+      return res.status(403).json({ error: "Email không thuộc tài khoản nhân sự đang hoạt động." });
+    }
+
+    const code = randomInt(100000, 1000000).toString();
     const expiresAt = Date.now() + 5 * 60 * 1000; // 5 minutes validity
 
-    verificationStore.set(email, {
-      email,
-      code,
-      expiresAt,
-      attempts: 0,
-    });
+    const isDev = process.env.NODE_ENV !== "production" || process.env.ALLOW_DEV_OTP_LOG !== "false";
+    try {
+      if (isDev) {
+        console.log(`[SmartShop Auth][DEV] Verification code for ${email}: ${code}`);
+      }
 
-    console.log(`[SmartSale Auth] Verification code for ${email}: ${code} (expires in 5 mins)`);
+      const mailTransporter = createMailTransporter();
+      if (mailTransporter) {
+        try {
+          const mailResult = await mailTransporter.sendMail({
+            from: process.env.SMTP_FROM || process.env.SMTP_USER,
+            to: email,
+            subject: `[SmartShop] Mã xác thực đăng nhập: ${code}`,
+            text: `Mã xác thực SmartShop của bạn là: ${code}\n\nMã có hiệu lực trong vòng 5 phút. Vui lòng không chia sẻ mã này với bất kỳ ai.\nNếu không thấy trong Hộp thư đến, vui lòng kiểm tra thư mục Thư rác (Spam/Junk).\n\nTrân trọng,\nĐội ngũ SmartShop POS & AI`,
+            html: `
+              <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 580px; margin: 0 auto; padding: 28px; border: 1px solid #e2e8f0; border-radius: 16px; background-color: #ffffff; color: #1e293b;">
+                <div style="text-align: center; margin-bottom: 24px;">
+                  <h1 style="color: #2563eb; font-size: 22px; font-weight: 800; margin: 0; letter-spacing: -0.5px;">SmartShop POS & AI</h1>
+                  <p style="color: #64748b; font-size: 13px; margin-top: 4px;">Hệ thống Quản lý Bán hàng Điện tử Thông minh</p>
+                </div>
+                <div style="padding: 24px; background-color: #f8fafc; border: 1px solid #f1f5f9; border-radius: 12px; text-align: center;">
+                  <p style="color: #475569; font-size: 14px; margin: 0 0 16px; font-weight: 500;">Mã xác thực đăng nhập bảo mật của bạn là:</p>
+                  <div style="display: inline-block; font-size: 34px; font-weight: 800; letter-spacing: 10px; color: #1d4ed8; background: #ffffff; padding: 14px 28px; border: 2px dashed #93c5fd; border-radius: 10px; box-shadow: 0 2px 8px rgba(37,99,235,0.08);">
+                    ${code}
+                  </div>
+                  <p style="color: #64748b; font-size: 12px; margin: 16px 0 0;">Mã có hiệu lực trong vòng <strong>5 phút</strong>. Tuyệt đối không chia sẻ mã này cho bất kỳ ai.</p>
+                </div>
+                <div style="margin-top: 20px; padding: 12px 16px; background-color: #fefce8; border: 1px solid #fef08a; border-radius: 8px; font-size: 12px; color: #854d0e; text-align: left;">
+                  <strong>Lưu ý quan trọng:</strong> Nếu bạn không tìm thấy email này trong Hộp thư đến (Inbox), vui lòng kiểm tra thêm thư mục <strong>Thư rác (Spam / Junk)</strong> hoặc tab <strong>Quảng cáo / Cập nhật</strong> của ứng dụng email.
+                </div>
+                <div style="margin-top: 24px; font-size: 11px; color: #94a3b8; text-align: center; border-top: 1px solid #f1f5f9; padding-top: 16px;">
+                  Email này được gửi tự động từ hệ thống SmartShop. Nếu bạn không yêu cầu đăng nhập, hãy bỏ qua email này.
+                </div>
+              </div>
+            `,
+          });
+          console.log(`[SmartShop Auth] Email sent successfully to ${email}. MessageId: ${mailResult.messageId}, Response: ${mailResult.response}`);
+        } finally {
+          try {
+            mailTransporter.close();
+          } catch (_) {}
+        }
+      } else if (process.env.NODE_ENV === "production" && process.env.ALLOW_DEV_OTP_LOG === "false") {
+        return res.status(503).json({ error: "Chưa cấu hình dịch vụ email OTP." });
+      }
+    } catch (error) {
+      console.error("OTP email delivery failed:", error);
+      if (process.env.NODE_ENV === "production") {
+        return res.status(502).json({ error: "Không thể gửi email OTP." });
+      }
+    }
+
+    verificationStore.set(email, { email, code, expiresAt, attempts: 0 });
 
     res.json({
       success: true,
-      message: `Mã xác thực đã được tạo và gửi đến ${email}`,
+      message: `Mã xác thực đã được gửi đến ${email}`,
       email,
-      code, // returned so client UI can display instant testing banner & one-click fill
       expiresInSeconds: 300,
+      ...(isDev ? { devCode: code } : {}),
     });
+  });
+
+  // Public candidate list for quick login presets
+  app.get("/api/auth/staff-candidates", (req, res) => {
+    const staffList = getStoreState().staffList
+      .filter((s) => s.status === "active")
+      .map(({ id, name, email, role, branch }) => ({ id, name, email, role, branch }));
+    res.json({ success: true, staffList });
   });
 
   // Verify submitted code
@@ -300,43 +464,314 @@ async function startServer() {
       });
     }
 
-    // Successfully verified!
+    const staff = getStoreState().staffList.find((candidate) => candidate.email.toLowerCase() === email);
+    if (!staff || staff.status !== "active") {
+      verificationStore.delete(email);
+      return res.status(403).json({ error: "Tài khoản nhân sự không còn hoạt động." });
+    }
+
     verificationStore.delete(email);
+    const sessionToken = randomBytes(32).toString("hex");
+    const expiresAt = Date.now() + 8 * 60 * 60 * 1000; // 8 hours validity
+    createStoreSession(
+      sessionToken,
+      email,
+      expiresAt,
+      typeof req.headers['user-agent'] === 'string' ? req.headers['user-agent'] : undefined,
+      req.ip
+    );
+
     res.json({
       success: true,
       message: "Xác thực email thành công.",
       email,
+      sessionToken,
+      user: staff,
     });
+  });
+
+  app.get("/api/auth/session", (req, res) => {
+    const token = typeof req.headers.authorization === "string"
+      ? req.headers.authorization.replace(/^Bearer\s+/i, "").trim()
+      : "";
+    if (!token) return res.status(401).json({ error: "Chưa cung cấp mã phiên đăng nhập." });
+
+    const session = getStoreSession(token);
+    if (!session) {
+      return res.status(401).json({ error: "Phiên đăng nhập không hợp lệ hoặc đã hết hạn." });
+    }
+
+    const user = getStoreState().staffList.find((candidate) => candidate.email.toLowerCase() === session.email);
+    if (!user || user.status !== "active") {
+      deleteStoreSession(token);
+      return res.status(401).json({ error: "Tài khoản không còn hoạt động." });
+    }
+
+    res.json({ success: true, user });
+  });
+
+  app.post("/api/auth/logout", (req, res) => {
+    const token = typeof req.headers.authorization === "string"
+      ? req.headers.authorization.replace(/^Bearer\s+/i, "").trim()
+      : "";
+    if (token) deleteStoreSession(token);
+    res.json({ success: true, message: "Đã đăng xuất tài khoản thành công." });
+  });
+
+  function getAuthenticatedSession(req: express.Request) {
+    const token = typeof req.headers.authorization === "string"
+      ? req.headers.authorization.replace(/^Bearer\s+/i, "").trim()
+      : "";
+    if (!token) return null;
+
+    const session = getStoreSession(token);
+    if (!session) return null;
+
+    const user = getStoreState().staffList.find((candidate) => candidate.email.toLowerCase() === session.email);
+    return user?.status === "active" ? { token, user } : null;
+  }
+
+  app.get("/api/store/state", (req, res) => {
+    if (!getAuthenticatedSession(req)) {
+      return res.status(401).json({ error: "Bạn cần đăng nhập để truy cập dữ liệu cửa hàng." });
+    }
+    res.json({ success: true, state: getStoreState() });
+  });
+
+  app.post("/api/store/permissions/audit", (req, res) => {
+    const session = getAuthenticatedSession(req);
+    if (!session) return res.status(401).json({ error: "Phiên đăng nhập không hợp lệ hoặc đã hết hạn." });
+    if (session.user.role !== 'admin') return res.status(403).json({ error: "Chỉ Admin mới được thay đổi phân quyền." });
+
+    const { action, changedRoles = [], changedModules = [] } = req.body || {};
+    if (action !== 'update' && action !== 'reset') return res.status(400).json({ error: "Loại thay đổi phân quyền không hợp lệ." });
+    const state = getStoreState();
+    const entry = {
+      id: `permission-audit-${Date.now()}`,
+      actorId: session.user.id,
+      actorName: session.user.name,
+      action,
+      changedRoles: Array.isArray(changedRoles) ? changedRoles : [],
+      changedModules: Array.isArray(changedModules) ? changedModules : [],
+      createdAt: new Date().toISOString(),
+    } as const;
+    state.permissionAuditHistory = [entry, ...state.permissionAuditHistory].slice(0, 500);
+    replaceStoreState(state);
+    res.json({ success: true, entry, history: state.permissionAuditHistory });
+  });
+
+  app.post("/api/store/staff/audit", (req, res) => {
+    const session = getAuthenticatedSession(req);
+    if (!session) return res.status(401).json({ error: "Phiên đăng nhập không hợp lệ hoặc đã hết hạn." });
+    if (session.user.role !== 'admin') return res.status(403).json({ error: "Chỉ Admin mới được ghi lịch sử quản lý nhân viên." });
+    const { action, targetId, targetName, details } = req.body || {};
+    const allowedActions = ['create', 'update', 'activate', 'deactivate', 'delete', 'permission_update', 'permission_reset', 'impersonate'];
+    if (!allowedActions.includes(action)) return res.status(400).json({ error: "Thao tác nhân viên không hợp lệ." });
+    try {
+      const state = getStoreState();
+      const entry = {
+        id: `staff-audit-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        actorId: session.user.id,
+        actorName: session.user.name,
+        action,
+        targetId,
+        targetName,
+        details,
+        createdAt: new Date().toISOString(),
+      };
+      state.staffAuditHistory = [entry, ...state.staffAuditHistory].slice(0, 1000);
+      replaceStoreState(state);
+      res.json({ success: true, entry, history: state.staffAuditHistory });
+    } catch (error) {
+      console.error('Staff audit write failed:', error);
+      res.status(500).json({ error: 'Không thể ghi lịch sử thao tác vào cơ sở dữ liệu.' });
+    }
+  });
+
+  // Staff Management CRUD Endpoints (Admin only)
+  app.post("/api/store/staff", (req, res) => {
+    const session = getAuthenticatedSession(req);
+    if (!session) return res.status(401).json({ error: "Phiên đăng nhập không hợp lệ hoặc đã hết hạn." });
+    if (session.user.role !== 'admin') return res.status(403).json({ error: "Chỉ Admin mới có quyền thêm nhân sự mới." });
+    try {
+      const result = addStoreStaff(req.body || {});
+      res.json({ success: true, ...result });
+    } catch (error) {
+      res.status(400).json({ error: error instanceof Error ? error.message : "Không thể thêm nhân sự." });
+    }
+  });
+
+  app.put("/api/store/staff/:id", (req, res) => {
+    const session = getAuthenticatedSession(req);
+    if (!session) return res.status(401).json({ error: "Phiên đăng nhập không hợp lệ hoặc đã hết hạn." });
+    if (session.user.role !== 'admin') return res.status(403).json({ error: "Chỉ Admin mới có quyền cập nhật nhân sự." });
+    try {
+      const state = updateStoreStaff({ ...req.body, id: req.params.id });
+      res.json({ success: true, state });
+    } catch (error) {
+      res.status(400).json({ error: error instanceof Error ? error.message : "Không thể cập nhật nhân sự." });
+    }
+  });
+
+  app.delete("/api/store/staff/:id", (req, res) => {
+    const session = getAuthenticatedSession(req);
+    if (!session) return res.status(401).json({ error: "Phiên đăng nhập không hợp lệ hoặc đã hết hạn." });
+    if (session.user.role !== 'admin') return res.status(403).json({ error: "Chỉ Admin mới có quyền xóa tài khoản nhân sự." });
+    try {
+      const state = deleteStoreStaff(req.params.id);
+      res.json({ success: true, state });
+    } catch (error) {
+      res.status(400).json({ error: error instanceof Error ? error.message : "Không thể xóa nhân sự." });
+    }
+  });
+
+  // Product Management CRUD Endpoints (Admin & Manager only)
+  app.post("/api/store/products", (req, res) => {
+    const session = getAuthenticatedSession(req);
+    if (!session) return res.status(401).json({ error: "Phiên đăng nhập không hợp lệ hoặc đã hết hạn." });
+    if (!['admin', 'manager'].includes(session.user.role)) {
+      return res.status(403).json({ error: "Chỉ Quản trị viên (Admin) và Quản lý (Manager) mới có quyền thêm sản phẩm." });
+    }
+    try {
+      const result = addStoreProduct(req.body || {});
+      res.json({ success: true, ...result });
+    } catch (error) {
+      res.status(400).json({ error: error instanceof Error ? error.message : "Không thể thêm sản phẩm." });
+    }
+  });
+
+  app.put("/api/store/products/:id", (req, res) => {
+    const session = getAuthenticatedSession(req);
+    if (!session) return res.status(401).json({ error: "Phiên đăng nhập không hợp lệ hoặc đã hết hạn." });
+    if (!['admin', 'manager'].includes(session.user.role)) {
+      return res.status(403).json({ error: "Chỉ Quản trị viên (Admin) và Quản lý (Manager) mới có quyền cập nhật sản phẩm." });
+    }
+    try {
+      const state = updateStoreProduct({ ...req.body, id: req.params.id });
+      res.json({ success: true, state });
+    } catch (error) {
+      res.status(400).json({ error: error instanceof Error ? error.message : "Không thể cập nhật sản phẩm." });
+    }
+  });
+
+  app.delete("/api/store/products/:id", (req, res) => {
+    const session = getAuthenticatedSession(req);
+    if (!session) return res.status(401).json({ error: "Phiên đăng nhập không hợp lệ hoặc đã hết hạn." });
+    if (!['admin', 'manager'].includes(session.user.role)) {
+      return res.status(403).json({ error: "Chỉ Quản trị viên (Admin) và Quản lý (Manager) mới có quyền xóa sản phẩm." });
+    }
+    try {
+      const state = deleteStoreProduct(req.params.id);
+      res.json({ success: true, state });
+    } catch (error) {
+      res.status(400).json({ error: error instanceof Error ? error.message : "Không thể xóa sản phẩm." });
+    }
+  });
+
+  app.post("/api/store/real-mode/reset", (req, res) => {
+    const session = getAuthenticatedSession(req);
+    if (!session) return res.status(401).json({ error: "Phiên đăng nhập không hợp lệ hoặc đã hết hạn." });
+    if (session.user.role !== 'admin') return res.status(403).json({ error: "Chỉ Admin mới có thể chuyển cửa hàng sang dữ liệu thật." });
+    res.json({ success: true, state: clearBusinessData() });
+  });
+
+  app.post("/api/store/checkout", (req, res) => {
+    const session = getAuthenticatedSession(req);
+    if (!session) return res.status(401).json({ error: "Phiên đăng nhập không hợp lệ hoặc đã hết hạn." });
+
+    try {
+      const result = checkoutStoreOrder({
+        items: req.body?.items,
+        customerId: req.body?.customerId,
+        paymentMethod: req.body?.paymentMethod,
+        voucherCode: req.body?.voucherCode,
+        cashier: session.user.name,
+      });
+      res.json({ success: true, ...result });
+    } catch (error) {
+      res.status(409).json({ error: error instanceof Error ? error.message : "Không thể hoàn tất thanh toán." });
+    }
+  });
+
+  app.post("/api/store/restock", (req, res) => {
+    const session = getAuthenticatedSession(req);
+    if (!session) return res.status(401).json({ error: "Phiên đăng nhập không hợp lệ hoặc đã hết hạn." });
+    if (!['admin', 'manager', 'inventory_staff'].includes(session.user.role)) {
+      return res.status(403).json({ error: "Bạn không có quyền nhập kho." });
+    }
+
+    try {
+      const state = restockStoreProduct({
+        productId: req.body?.productId,
+        quantity: req.body?.quantity,
+        branch: req.body?.branch || session.user.branch,
+      });
+      res.json({ success: true, state });
+    } catch (error) {
+      res.status(409).json({ error: error instanceof Error ? error.message : "Không thể nhập kho." });
+    }
+  });
+
+  app.post("/api/store/restock/:id/receive", (req, res) => {
+    const session = getAuthenticatedSession(req);
+    if (!session) return res.status(401).json({ error: "Phiên đăng nhập không hợp lệ hoặc đã hết hạn." });
+    if (!['admin', 'manager', 'inventory_staff'].includes(session.user.role)) return res.status(403).json({ error: "Bạn không có quyền nhận hàng." });
+    try {
+      res.json({ success: true, state: receiveRestockOrder(req.params.id) });
+    } catch (error) {
+      res.status(409).json({ error: error instanceof Error ? error.message : "Không thể nhận hàng." });
+    }
+  });
+
+  app.post("/api/store/returns", (req, res) => {
+    const session = getAuthenticatedSession(req);
+    if (!session) return res.status(401).json({ error: "Phiên đăng nhập không hợp lệ hoặc đã hết hạn." });
+    if (!['admin', 'manager', 'cashier'].includes(session.user.role)) return res.status(403).json({ error: "Bạn không có quyền xử lý trả hàng." });
+    try {
+      res.json({ success: true, state: createReturnRecord({ orderId: req.body?.orderId, reason: req.body?.reason }) });
+    } catch (error) {
+      res.status(409).json({ error: error instanceof Error ? error.message : "Không thể tạo yêu cầu trả hàng." });
+    }
+  });
+
+  app.post("/api/store/warranty-claims", (req, res) => {
+    if (!getAuthenticatedSession(req)) return res.status(401).json({ error: "Phiên đăng nhập không hợp lệ hoặc đã hết hạn." });
+    try {
+      res.json({ success: true, state: createWarrantyClaim({ orderId: req.body?.orderId, productId: req.body?.productId, issue: req.body?.issue }) });
+    } catch (error) {
+      res.status(409).json({ error: error instanceof Error ? error.message : "Không thể tạo yêu cầu bảo hành." });
+    }
   });
 
   // AI Chat endpoint
   app.post("/api/ai/chat", async (req, res) => {
+    const session = getAuthenticatedSession(req);
+    if (!session) return res.status(401).json({ error: "Bạn cần đăng nhập để sử dụng AI." });
+
     try {
-      const { message, imageAttachment, history, products, customers, branches } = req.body;
+      const { message, imageAttachment, history } = req.body;
+      const storeState = getStoreState();
+      const products = storeState.products;
+      const orders = storeState.orders;
+      const customers = ['admin', 'manager'].includes(session.user.role) ? storeState.customers : [];
+      const branches = [];
       if (!message && !imageAttachment) {
         return res.status(400).json({ error: "Message or image is required" });
       }
 
       const userText = message || "Phân tích hình ảnh này và cho tôi biết thông tin sản phẩm hoặc hóa đơn.";
-      const productListSummary = Array.isArray(products) && products.length > 0
-        ? products.map((p: any) => `- ${p.name} (Mã: ${p.code}, Danh mục: ${p.category}, Giá bán: ${p.price.toLocaleString('vi-VN')}đ, Giá vốn: ${p.costPrice?.toLocaleString('vi-VN')}đ, Tồn kho: ${p.stock} cái, Đã bán: ${p.soldCount || 0}, Trạng thái: ${p.status})`).join("\n")
-        : `- iPhone 15 Pro Max 256GB (Giá: 29.590.000đ, Tồn: 12, Đã bán: 28)
-- MacBook Pro M3 14-inch (Giá: 39.990.000đ, Tồn: 5, Đã bán: 12)
-- Sony WH-1000XM5 (Giá: 7.490.000đ, Tồn: 0, Hết hàng, Đã bán: 15)
-- Apple Watch Series 9 (Giá: 10.290.000đ, Tồn: 24, Đã bán: 35)
-- Samsung Galaxy A55 (Giá: 10.000.000đ, Tồn: 48, Đã bán: 42)
-- MacBook Air M2 8GB/256GB (Giá: 26.590.000đ, Tồn: 12, Đã bán: 19)
-- Ốp lưng iPhone 15 Pro Max Clear Case (Giá: 1.490.000đ, Tồn: 0, Hết hàng, Đã bán: 88)
-- iPhone 14 Pro Max 256GB (Giá: 24.990.000đ, Tồn: 3, Đã bán: 65)
-- Áo Thun Trắng Basic Premium (Giá: 250.000đ, Tồn: 45, Đã bán: 120)
-- iPad Air M2 11-inch (Giá: 16.990.000đ, Tồn: 18, Đã bán: 14)
-- AirPods Pro Gen 2 (Giá: 5.890.000đ, Tồn: 30, Đã bán: 52)
-- Samsung Galaxy Tab S9 Ultra (Giá: 24.490.000đ, Tồn: 8, Đã bán: 7)`;
+      const productListSummary = products.length > 0
+        ? products.map((p: any) => `- ${p.name} (Mã: ${p.code}, Danh mục: ${p.category}, Giá bán: ${p.price.toLocaleString('vi-VN')}đ, ${['admin', 'manager'].includes(session.user.role) ? `Giá vốn: ${p.costPrice?.toLocaleString('vi-VN')}đ, ` : ''}Tồn kho: ${p.stock} cái, Đã bán: ${p.soldCount || 0}, Trạng thái: ${p.status})`).join("\n")
+        : "Chưa có sản phẩm thật nào trong kho. Không được tự tạo hoặc suy đoán sản phẩm.";
+      const orderSummary = summarizeOrdersForAi(orders);
 
-      const systemInstruction = `Bạn là Trợ lý AI Bán hàng & Quản trị Kinh doanh thông minh (SmartSale AI Assistant).
+      const systemInstruction = `Bạn là Trợ lý AI Bán hàng & Quản trị Kinh doanh thông minh (SmartShop AI Assistant).
 Bạn có quyền truy cập vào dữ liệu sản phẩm, danh mục, giá cả, tồn kho, khách hàng và chi nhánh sau:
 DANH SÁCH SẢN PHẨM HIỆN TẠI:
 ${productListSummary}
+
+DỮ LIỆU ĐƠN HÀNG VÀ DOANH THU:
+${orderSummary}
 
 NHIỆM VỤ CỦA BẠN:
 1. Trả lời nhanh chóng, chuyên nghiệp và thân thiện bằng tiếng Việt.
@@ -344,239 +779,814 @@ NHIỆM VỤ CỦA BẠN:
 3. Hỗ trợ tra cứu doanh thu, dự báo bán hàng, tư vấn chính sách khuyến mãi và tối ưu dòng tiền.
 4. Trình bày định dạng Markdown rõ ràng, có điểm nhấn và các con số cụ thể.`;
 
-      const ai = getGenAI();
-      if (ai) {
-        // Build multimodal or text contents
-        const parts: any[] = [];
-        if (imageAttachment && imageAttachment.startsWith("data:")) {
-          const match = imageAttachment.match(/^data:(image\/[a-zA-Z0-9+.-]+);base64,(.+)$/);
-          if (match) {
-            parts.push({
-              inlineData: {
-                mimeType: match[1],
-                data: match[2],
-              },
-            });
-          }
+      // Build multimodal or text contents
+      const parts: any[] = [];
+      if (imageAttachment && imageAttachment.startsWith("data:")) {
+        const match = imageAttachment.match(/^data:(image\/[a-zA-Z0-9+.-]+);base64,(.+)$/);
+        if (match) {
+          parts.push({
+            inlineData: {
+              mimeType: match[1],
+              data: match[2],
+            },
+          });
         }
-        parts.push({ text: userText });
-
-        const contentsPayload = parts.length === 1 && typeof parts[0].text === "string" 
-          ? parts[0].text 
-          : { parts };
-
-        const response = await ai.models.generateContent({
-          model: "gemini-3.7-flash",
-          contents: contentsPayload,
-          config: {
-            systemInstruction,
-            temperature: 0.7,
-          },
-        });
-
-        const replyText = response.text || "Tôi đã nhận được thông tin từ bạn và đang xử lý dữ liệu bán hàng.";
-        
-        // Find if a product should be attached
-        const matchedProduct = findMatchingProduct(userText + " " + replyText, products);
-
-        return res.json({ 
-          reply: replyText,
-          productCard: matchedProduct ? {
-            name: matchedProduct.name,
-            price: matchedProduct.price,
-            stock: matchedProduct.stock,
-            image: matchedProduct.image,
-            actionText: matchedProduct.stock > 0 ? "NHẬP VÀO GIỎ" : "ĐẶT HÀNG NHẬP KHO",
-          } : undefined
-        });
-      } else {
-        // High-intelligence Local Fallback Engine
-        const localResult = generateSmartLocalResponse(userText, products, customers, branches);
-        return res.json({ reply: localResult.reply });
       }
+      parts.push({ text: userText });
+
+      const contentsPayload = parts.length === 1 && typeof parts[0].text === "string" 
+        ? parts[0].text 
+        : { parts };
+
+      const geminiResult = await callGeminiWithTimeout({
+        contents: contentsPayload,
+        config: {
+          systemInstruction,
+          temperature: 0.7,
+        },
+        timeoutMs: 12000,
+        preferModel: "gemini-flash-latest",
+      });
+
+      const replyText = geminiResult.text || "Tôi đã nhận được thông tin từ bạn và đang xử lý dữ liệu bán hàng.";
+      
+      // Find if a product should be attached
+      const matchedProduct = findMatchingProduct(userText + " " + replyText, products);
+
+      return res.json({ 
+        reply: replyText,
+        aiEngine: `Google Gemini (${geminiResult.modelUsed})`,
+        productCard: matchedProduct ? {
+          name: matchedProduct.name,
+          price: matchedProduct.price,
+          stock: matchedProduct.stock,
+          image: matchedProduct.image,
+          actionText: matchedProduct.stock > 0 ? "NHẬP VÀO GIỎ" : "ĐẶT HÀNG NHẬP KHO",
+        } : undefined
+      });
     } catch (err: any) {
-      console.error("AI chat error:", err);
-      const fallbackResult = generateSmartLocalResponse(req.body.message || "", req.body.products, req.body.customers, req.body.branches);
-      return res.json({ reply: fallbackResult.reply });
+      console.warn("[SmartShop AI] Primary Gemini call failed, using intelligent heuristic fallback:", err?.message || err);
+      const fallbackState = getStoreState();
+      const fallbackCustomers = ['admin', 'manager'].includes(session.user.role) ? fallbackState.customers : [];
+      const userText = req.body?.message || "";
+      const fallbackResult = generateSmartLocalResponse(userText, fallbackState.products, fallbackCustomers, [], fallbackState.orders);
+      const matchedProduct = fallbackResult.matchedProduct || findMatchingProduct(userText + " " + fallbackResult.reply, fallbackState.products);
+
+      return res.json({
+        reply: fallbackResult.reply,
+        aiEngine: "SmartShop Heuristic Engine (Offline)",
+        productCard: matchedProduct ? {
+          name: matchedProduct.name,
+          price: matchedProduct.price,
+          stock: matchedProduct.stock,
+          image: matchedProduct.image,
+          actionText: matchedProduct.stock > 0 ? "NHẬP VÀO GIỎ" : "ĐẶT HÀNG NHẬP KHO",
+        } : undefined,
+      });
+    }
+  });
+
+  // AI Business Analyst API - Comprehensive Business Analytics
+  app.post("/api/ai/analyze-business", async (req, res) => {
+    const session = getAuthenticatedSession(req);
+    if (!session) return res.status(401).json({ error: "Bạn cần đăng nhập để sử dụng AI Analyst." });
+    if (!['admin', 'manager'].includes(session.user.role)) {
+      return res.status(403).json({ error: "Chỉ Quản trị viên (Admin) và Quản lý (Manager) mới có quyền truy cập AI Business Analyst." });
+    }
+
+    try {
+      const storeState = getStoreState();
+      const products = storeState.products || [];
+      const orders = storeState.orders || [];
+      const customers = storeState.customers || [];
+
+      const completedOrders = orders.filter((o: any) => o.status === 'completed');
+      const totalRevenue = completedOrders.reduce((sum: number, o: any) => sum + Number(o.total || 0), 0);
+      const totalStock = products.reduce((sum: number, p: any) => sum + Number(p.stock || 0), 0);
+      const totalInventoryCost = products.reduce((sum: number, p: any) => sum + Number(p.stock || 0) * Number(p.costPrice || 0), 0);
+      const lowStockCount = products.filter((p: any) => Number(p.stock || 0) <= 10).length;
+
+      // 1. Comprehensive Pre-aggregation across 100% of database records
+      const productSalesMap = new Map<string, { id: string; name: string; category: string; sold: number; revenue: number }>();
+      for (const order of completedOrders) {
+        for (const item of (order.items || [])) {
+          const rawItem = item as any;
+          const prodId = rawItem.product?.id || rawItem.productId;
+          if (!prodId) continue;
+          const current = productSalesMap.get(prodId) || {
+            id: prodId,
+            name: rawItem.product?.name || "Sản phẩm",
+            category: rawItem.product?.category || "Chung",
+            sold: 0,
+            revenue: 0,
+          };
+          current.sold += Number(item.quantity || 1);
+          current.revenue += Number(item.product?.price || 0) * Number(item.quantity || 1);
+          productSalesMap.set(prodId, current);
+        }
+      }
+
+      const allTopSellers = Array.from(productSalesMap.values())
+        .sort((a, b) => b.sold - a.sold)
+        .slice(0, 5);
+
+      const slowMovingItems = products
+        .filter((p) => (p.soldCount || 0) === 0 && p.stock > 0)
+        .map((p) => ({ name: p.name, stock: p.stock, costTiedUp: p.stock * (p.costPrice || 0) }))
+        .sort((a, b) => b.costTiedUp - a.costTiedUp)
+        .slice(0, 5);
+
+      const criticalShortages = products
+        .filter((p) => p.stock <= 5)
+        .map((p) => ({ id: p.id, name: p.name, stock: p.stock, price: p.price }))
+        .slice(0, 8);
+
+      const highMarginItems = products
+        .filter((p) => p.stock > 0 && p.price > 0 && p.costPrice > 0)
+        .map((p) => ({
+          id: p.id,
+          name: p.name,
+          marginPct: Math.round(((p.price - p.costPrice) / p.price) * 100),
+          stock: p.stock,
+          price: p.price,
+        }))
+        .sort((a, b) => b.marginPct - a.marginPct)
+        .slice(0, 5);
+
+      let analysisResult: any = null;
+      let aiEngine = "Smart Analytics Heuristic Engine (Offline)";
+
+      try {
+        const prompt = `Bạn là Giám đốc Phân tích Kinh doanh & Bán lẻ AI (Senior AI Retail Business Analyst) cho SmartShop.
+Hãy phân tích dữ liệu tổng hợp thực tế sau từ hệ thống:
+1. TỔNG QUAN: ${products.length} mã sản phẩm, ${totalStock} cái trong kho, tổng vốn tồn kho: ${totalInventoryCost.toLocaleString('vi-VN')}đ, tổng doanh thu hoàn tất: ${totalRevenue.toLocaleString('vi-VN')}đ từ ${completedOrders.length} hóa đơn.
+2. TOP BÁN CHẠY NHẤT: ${JSON.stringify(allTopSellers)}
+3. HÀNG SẮP HẾT HOẶC ĐÃ HẾT (Tồn <= 5): ${JSON.stringify(criticalShortages)}
+4. HÀNG CHẬM BÁN ĐỌNG VỐN CAO (Chưa bán được cái nào): ${JSON.stringify(slowMovingItems)}
+5. SẢN PHẨM BIÊN LỢI NHUẬN CAO NHẤT: ${JSON.stringify(highMarginItems)}
+
+HÃY PHÂN TÍCH CHUYÊN SÂU VÀ TRẢ VỀ DUY NHẤT 1 ĐỐI TƯỢNG JSON (KHÔNG KÈM KÝ TỰ KHÁC HOẶC BACKTICKS):
+{
+  "businessHealthScore": 85,
+  "healthEvaluation": "Nhận xét tổng quan tình hình kinh doanh súc tích trong 1-2 câu",
+  "keyInsights": {
+    "crossSell": {
+      "title": "Tiêu đề cơ hội bán chéo / combo",
+      "description": "Chi tiết combo ghép cặp giữa 2 sản phẩm cụ thể có trong danh sách",
+      "expectedRevenueIncrease": "+15-20% AOV",
+      "primaryProductName": "Tên sản phẩm 1",
+      "comboProductName": "Tên sản phẩm 2",
+      "primaryProductId": "id sản phẩm 1",
+      "comboProductId": "id sản phẩm 2"
+    },
+    "inventoryRisk": {
+      "title": "Cảnh báo rủi ro tồn kho",
+      "description": "Chi tiết mã hàng sắp hết hoặc hết hàng cần nhập",
+      "criticalStock": 3,
+      "productName": "Tên sản phẩm cảnh báo",
+      "productId": "id sản phẩm",
+      "urgency": "high"
+    },
+    "marginOptimization": {
+      "title": "Tối ưu hóa giá & biên lợi nhuận",
+      "description": "Chi tiết sản phẩm có biên lợi nhuận tốt hoặc cần điều chỉnh",
+      "marginPercent": 32,
+      "productName": "Tên sản phẩm",
+      "productId": "id sản phẩm",
+      "recommendation": "Khuyến nghị hành động cụ thể"
+    },
+    "salesForecast": {
+      "title": "Dự báo doanh thu tuần tới",
+      "description": "Nhận định xu hướng dựa trên lịch sử bán hàng",
+      "projectedRevenueNextWeek": "50.000.000đ",
+      "trend": "up"
+    }
+  },
+  "executiveSummary": {
+    "cashFlowAnalysis": "Phân tích dòng tiền vốn lưu động và tồn kho với số liệu thực",
+    "workingCapitalStatus": "Đánh giá trạng thái vốn lưu động",
+    "inventoryTurnoverRatio": "Đánh giá vòng quay hàng tồn kho"
+  },
+  "actionPlan7Days": [
+    { "category": "Bổ sung tồn kho", "action": "Hành động cụ thể", "priority": "high" },
+    { "category": "Thúc đẩy bán hàng", "action": "Hành động cụ thể", "priority": "medium" },
+    { "category": "Vận hành quầy POS", "action": "Hành động cụ thể", "priority": "low" }
+  ],
+  "promotionalIdeas": [
+    { "title": "Chiến dịch kích cầu", "targetProducts": "Sản phẩm cụ thể", "mechanism": "Giảm 10% khi mua kèm phụ kiện" },
+    { "title": "Xả kho hàng chậm bán", "targetProducts": "Sản phẩm cụ thể", "mechanism": "Tặng voucher 50.000đ cho lần mua tiếp theo" }
+  ]
+}`;
+
+        const geminiResult = await callGeminiWithTimeout({
+          contents: prompt,
+          config: {
+            temperature: 0.3,
+          },
+          timeoutMs: 15000,
+          preferModel: "gemini-flash-latest",
+        });
+
+        const rawText = geminiResult.text || "";
+        const jsonMatch = rawText.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          analysisResult = JSON.parse(jsonMatch[0]);
+          aiEngine = `Google Gemini (${geminiResult.modelUsed})`;
+        }
+      } catch (geminiError: any) {
+        console.warn("[SmartShop AI Analyst] Gemini call failed, using heuristic engine:", geminiError?.message || geminiError);
+      }
+
+      if (!analysisResult) {
+        analysisResult = generateHeuristicBusinessAnalysis(products, orders, customers);
+      }
+
+      res.json({
+        success: true,
+        data: analysisResult,
+        aiEngine,
+        timestamp: new Date().toISOString(),
+        stats: {
+          totalProducts: products.length,
+          totalStock,
+          totalInventoryCost,
+          totalRevenue,
+          completedOrdersCount: completedOrders.length,
+          lowStockCount,
+        },
+      });
+    } catch (error) {
+      console.error("[SmartShop AI Analyst] Error generating analysis:", error);
+      res.status(500).json({ error: "Không thể phân tích dữ liệu kinh doanh." });
+    }
+  });
+
+  // Interactive AI Business Analyst Strategic Q&A
+  app.post("/api/ai/analyst-query", async (req, res) => {
+    const session = getAuthenticatedSession(req);
+    if (!session) return res.status(401).json({ error: "Bạn cần đăng nhập để đặt câu hỏi cho AI Analyst." });
+    if (!['admin', 'manager'].includes(session.user.role)) {
+      return res.status(403).json({ error: "Chỉ Quản trị viên (Admin) và Quản lý (Manager) mới có quyền hỏi đáp chiến lược kinh doanh." });
+    }
+
+    const question = req.body?.question ? String(req.body.question).trim() : "";
+    if (!question) return res.status(400).json({ error: "Vui lòng nhập câu hỏi phân tích kinh doanh." });
+
+    try {
+      const storeState = getStoreState();
+      const products = storeState.products || [];
+      const orders = storeState.orders || [];
+      const completedOrders = orders.filter((o: any) => o.status === 'completed');
+      const totalRevenue = completedOrders.reduce((sum: number, o: any) => sum + Number(o.total || 0), 0);
+
+      try {
+        const prompt = `Bạn là Senior AI Retail Business Analyst chuyên nghiệp cho SmartShop (Cửa hàng thiết bị điện tử & công nghệ).
+Dữ liệu cửa hàng hiện tại:
+- Tổng số mặt hàng: ${products.length} mã sản phẩm.
+- Tổng doanh thu đã ghi nhận: ${totalRevenue.toLocaleString('vi-VN')}đ (${completedOrders.length} đơn hoàn tất).
+- Sản phẩm bán chạy hàng đầu: ${products.slice(0, 5).map((p: any) => `${p.name} (Đã bán: ${p.soldCount || 0}, Tồn: ${p.stock})`).join(", ")}
+- Sản phẩm sắp hết hàng (tồn <= 5): ${products.filter((p: any) => p.stock <= 5).map((p: any) => `${p.name} (còn ${p.stock})`).join(", ") || "Không có"}
+
+Chủ cửa hàng hỏi: "${question}"
+
+Hãy đưa ra câu trả lời chiến lược, súc tích, thực tế, có số liệu và bước hành động cụ thể bằng định dạng Markdown rõ ràng, chuyên nghiệp.`;
+
+        const geminiResult = await callGeminiWithTimeout({
+          contents: prompt,
+          config: {
+            temperature: 0.5,
+          },
+          timeoutMs: 15000,
+          preferModel: "gemini-flash-latest",
+        });
+
+        return res.json({
+          success: true,
+          answer: geminiResult.text || "AI đã phân tích dữ liệu nhưng chưa thể sinh phản hồi.",
+          aiEngine: `Google Gemini (${geminiResult.modelUsed})`,
+          timestamp: new Date().toISOString(),
+        });
+      } catch (geminiError: any) {
+        console.warn("[SmartShop AI Analyst] Query failed, using heuristic answer:", geminiError?.message || geminiError);
+      }
+
+      const fallbackAnswer = generateHeuristicAnalystAnswer(question, products, orders);
+      res.json({
+        success: true,
+        answer: fallbackAnswer,
+        aiEngine: "Smart Analytics Heuristic Engine (Offline)",
+        timestamp: new Date().toISOString(),
+      });
+    } catch (error) {
+      console.error("[SmartShop AI Analyst] Query error:", error);
+      res.status(500).json({ error: "Không thể trả lời câu hỏi phân tích." });
     }
   });
 
   // Visual Checkout API - AI Image & Product Recognition
   app.post("/api/ai/visual-checkout", async (req, res) => {
+    const session = getAuthenticatedSession(req);
+    if (!session) return res.status(401).json({ error: "Bạn cần đăng nhập để sử dụng AI." });
+
     try {
-      const { image, products } = req.body;
+      const { image } = req.body;
       if (!image) {
         return res.status(400).json({ error: "Image data is required" });
       }
 
-      const productList = Array.isArray(products) && products.length > 0 ? products : [];
+      const productList = getStoreState().products || [];
       const ai = getGenAI();
 
-      if (ai && image.startsWith("data:")) {
+      if (ai && typeof image === "string" && image.startsWith("data:")) {
         const match = image.match(/^data:(image\/[a-zA-Z0-9+.-]+);base64,(.+)$/);
         if (match) {
           const productSummary = productList
-            .map((p: any) => `ID: "${p.id}", Tên: "${p.name}", Mã/SKU: "${p.sku || p.code}", Danh mục: "${p.category}", Giá: ${p.price}đ`)
+            .map((p: any) => `ID: "${p.id}", Tên: "${p.name}", Mã/SKU: "${p.sku || p.code}", Danh mục: "${p.category}", Giá: ${p.price}đ, Tồn kho: ${p.stock}`)
             .join("\n");
 
-          const prompt = `Bạn là hệ thống AI Visual Checkout tại quầy thu ngân siêu thị / cửa hàng.
-Nhiệm vụ: Phân tích hình ảnh chụp sản phẩm từ camera thu ngân, so sánh với danh mục sản phẩm hiện có của cửa hàng và tìm sản phẩm khớp nhất.
+          const prompt = `Bạn là hệ thống AI Visual Checkout tại quầy thu ngân cửa hàng điện tử & phụ kiện SmartShop.
+Nhiệm vụ: Phân tích hình ảnh chụp từ camera quầy thu ngân, so sánh với danh mục sản phẩm của cửa hàng để tìm sản phẩm khớp nhất.
 
-DANH MỤC SẢN PHẨM HIỆN CÓ:
+QUY TẮC CỰC KỲ QUAN TRỌNG:
+1. Nếu hình ảnh không rõ ràng, là đồ vật cá nhân, tường, khuôn mặt, thẻ ngân hàng, hoặc không khớp với sản phẩm nào trong danh mục, BẮT BUỘC trả về "matchedProductId": "" và confidence: 0.1.
+2. KHÔNG ĐƯỢC đoán mò hoặc tự ý gán cho một sản phẩm ngẫu nhiên.
+3. Chỉ gán matchedProductId khi bạn nhận diện được sản phẩm hoặc bao bì/logo/nhãn hiệu trùng khớp rõ ràng (confidence >= 0.65).
+
+DANH MỤC SẢN PHẨM HIỆN CÓ CỦA CỬA HÀNG:
 ${productSummary || "Chưa có danh mục sản phẩm cụ thể."}
 
 HÃY PHÂN TÍCH VÀ TRẢ VỀ DUY NHẤT MỘT ĐỐI TƯỢNG JSON (KHÔNG KÈM MARKDOWN HOẶC BACKTICKS):
 {
   "matchedProductId": "ID của sản phẩm trong danh mục nếu khớp hoặc chuỗi rỗng",
-  "productName": "Tên sản phẩm được nhận diện",
-  "confidence": 0.95,
+  "productName": "Tên sản phẩm được nhận diện hoặc chuỗi rỗng",
+  "confidence": 0.85,
   "category": "Danh mục sản phẩm",
-  "description": "Lý do nhận diện (hình dáng, màu sắc, bao bì hoặc nhãn mác)",
-  "barcode": "Mã vạch nhìn thấy nếu có",
+  "description": "Lý do nhận diện hoặc mô tả chi tiết đặc điểm nhận biết",
+  "barcode": "Mã vạch nhìn thấy nếu có hoặc null",
   "alternativeMatches": [
-    { "productId": "id", "productName": "tên", "confidence": 0.75 }
+    { "productId": "id", "productName": "tên", "confidence": 0.6 }
   ]
 }`;
 
-          const response = await ai.models.generateContent({
-            model: "gemini-3.7-flash",
-            contents: {
-              parts: [
-                {
-                  inlineData: {
-                    mimeType: match[1],
-                    data: match[2],
+          try {
+            const geminiResult = await callGeminiWithTimeout({
+              contents: {
+                parts: [
+                  {
+                    inlineData: {
+                      mimeType: match[1],
+                      data: match[2],
+                    },
                   },
-                },
-                { text: prompt },
-              ],
-            },
-            config: {
-              temperature: 0.2,
-            },
-          });
+                  { text: prompt },
+                ],
+              },
+              config: {
+                temperature: 0.1,
+              },
+              timeoutMs: 15000,
+              preferModel: "gemini-flash-latest",
+            });
 
-          const rawText = response.text || "";
-          // Extract JSON
-          const jsonMatch = rawText.match(/\{[\s\S]*\}/);
-          if (jsonMatch) {
-            try {
+            const rawText = geminiResult.text || "";
+            const jsonMatch = rawText.match(/\{[\s\S]*\}/);
+            if (jsonMatch) {
               const parsed = JSON.parse(jsonMatch[0]);
-              let targetProduct = productList.find((p: any) => p.id === parsed.matchedProductId);
-              if (!targetProduct && parsed.productName) {
+              let targetProduct = null;
+
+              if (parsed.matchedProductId) {
+                targetProduct = productList.find((p: any) => p.id === parsed.matchedProductId);
+              }
+              if (!targetProduct && parsed.productName && parsed.productName.trim() !== "") {
+                const searchName = parsed.productName.toLowerCase();
                 targetProduct = productList.find((p: any) =>
-                  p.name.toLowerCase().includes(parsed.productName.toLowerCase()) ||
-                  parsed.productName.toLowerCase().includes(p.name.toLowerCase())
+                  p.name.toLowerCase().includes(searchName) ||
+                  searchName.includes(p.name.toLowerCase())
                 );
               }
 
-              return res.json({
-                success: true,
-                matchedProduct: targetProduct || null,
-                confidence: parsed.confidence || 0.9,
-                description: parsed.description || "Nhận diện dựa trên hình ảnh bao bì sản phẩm",
-                barcode: parsed.barcode || null,
-                alternativeMatches: parsed.alternativeMatches || [],
-              });
-            } catch (e) {
-              console.warn("Failed to parse Gemini visual response as JSON:", rawText);
+              const confidence = typeof parsed.confidence === "number" ? parsed.confidence : 0;
+
+              if (targetProduct && confidence >= 0.5) {
+                return res.json({
+                  success: true,
+                  matchedProduct: targetProduct,
+                  confidence: confidence,
+                  description: parsed.description || `Nhận diện thành công: ${targetProduct.name}`,
+                  barcode: parsed.barcode || targetProduct.code || null,
+                  alternativeMatches: Array.isArray(parsed.alternativeMatches) ? parsed.alternativeMatches : [],
+                  aiEngine: `Google Gemini Vision (${geminiResult.modelUsed})`,
+                });
+              } else {
+                return res.json({
+                  success: true,
+                  matchedProduct: null,
+                  confidence: confidence < 0.5 ? confidence : 0,
+                  description: parsed.description || "Không nhận diện được sản phẩm nào trong kho từ hình ảnh đã chụp.",
+                  barcode: null,
+                  alternativeMatches: [],
+                  aiEngine: `Google Gemini Vision (${geminiResult.modelUsed})`,
+                });
+              }
             }
+          } catch (geminiError: any) {
+            console.warn("[SmartShop AI Visual Checkout] Gemini Vision failed:", geminiError?.message || geminiError);
           }
         }
       }
 
-      // Smart Visual Heuristic Fallback
-      // Pick best candidate or first available product with category match
-      const fallbackItem = productList[0] || null;
+      // Safe fallback when Gemini Vision is unavailable or fails:
+      // NEVER blindly return productList[0] with fake high confidence!
       return res.json({
         success: true,
-        matchedProduct: fallbackItem,
-        confidence: fallbackItem ? 0.88 : 0,
-        description: fallbackItem
-          ? `Nhận diện tự động: ${fallbackItem.name} (${fallbackItem.category})`
-          : "Không tìm thấy sản phẩm tương ứng trong kho hàng",
-        alternativeMatches: productList.slice(1, 4).map((p: any, idx: number) => ({
-          productId: p.id,
-          productName: p.name,
-          confidence: Math.max(0.5, 0.8 - idx * 0.1),
-        })),
+        matchedProduct: null,
+        confidence: 0,
+        description: "Hệ thống AI thị giác tạm thời không thể nhận diện sản phẩm này. Vui lòng quét mã vạch bằng máy quét hoặc tìm kiếm sản phẩm theo tên.",
+        alternativeMatches: [],
+        aiEngine: "SmartShop Vision Engine (Offline/Fallback)",
       });
     } catch (err: any) {
-      console.error("Visual checkout error:", err);
-      const firstProd = req.body.products?.[0] || null;
-      return res.json({
-        success: true,
-        matchedProduct: firstProd,
-        confidence: 0.82,
-        description: firstProd ? `Nhận diện dự phòng: ${firstProd.name}` : "Không thể nhận diện hình ảnh",
-        alternativeMatches: [],
+      console.error("[SmartShop AI Visual Checkout] Error:", err);
+      return res.status(500).json({
+        success: false,
+        error: "Lỗi trong quá trình xử lý hình ảnh nhận diện sản phẩm.",
+        matchedProduct: null,
+        confidence: 0,
       });
     }
   });
 
-  function findMatchingProduct(text: string, productsList?: any[]): any | null {
-    const list = productsList || [
-      { name: "Áo Thun Trắng Basic Premium", price: 250000, stock: 45, image: "https://images.unsplash.com/photo-1521572267360-ee0c2909d518?w=600&auto=format&fit=crop&q=80" },
-      { name: "Samsung Galaxy A55", price: 10000000, stock: 48, image: "https://images.unsplash.com/photo-1610945415295-d9bbf067e59c?w=600&auto=format&fit=crop&q=80" },
-      { name: "iPhone 15 Pro Max 256GB", price: 29590000, stock: 12, image: "https://images.unsplash.com/photo-1695048133142-1a20484d2569?w=600&auto=format&fit=crop&q=80" },
-      { name: "Apple Watch Series 9", price: 10290000, stock: 24, image: "https://images.unsplash.com/photo-1508685096489-7aacd43bd3b1?w=600&auto=format&fit=crop&q=80" },
-      { name: "MacBook Pro M3 14-inch", price: 39990000, stock: 5, image: "https://images.unsplash.com/photo-1517336714731-489689fd1ca8?w=600&auto=format&fit=crop&q=80" },
-      { name: "Sony WH-1000XM5", price: 7490000, stock: 0, image: "https://images.unsplash.com/photo-1546435770-a3e426bf472b?w=600&auto=format&fit=crop&q=80" },
-      { name: "AirPods Pro Gen 2", price: 5890000, stock: 30, image: "https://images.unsplash.com/photo-1600294037681-c80b4cb5b434?w=600&auto=format&fit=crop&q=80" }
-    ];
-
+  function extractBudgetFromText(text: string): number | null {
     const lower = text.toLowerCase();
-    for (const p of list) {
-      const pNameLower = p.name.toLowerCase();
-      if (lower.includes(pNameLower) || (pNameLower.includes("áo thun") && lower.includes("áo")) || (pNameLower.includes("samsung") && lower.includes("samsung")) || (pNameLower.includes("iphone 15") && lower.includes("15")) || (pNameLower.includes("macbook") && lower.includes("macbook")) || (pNameLower.includes("sony") && lower.includes("sony")) || (pNameLower.includes("airpods") && lower.includes("airpods")) || (pNameLower.includes("watch") && lower.includes("watch"))) {
-        return p;
-      }
+
+    // Check "dưới 15 triệu", "tầm 10tr", "khoảng 20 củ", "dưới 500k", "<= 15000000"
+    const millionMatch = lower.match(/(?:dưới|tầm|khoảng|<=|nhỏ hơn|tối đa|budget|giá|ngân sách)?\s*(\d+(?:[.,]\d+)?)\s*(triệu|tr|củ|m)\b/i);
+    if (millionMatch) {
+      const num = parseFloat(millionMatch[1].replace(',', '.'));
+      if (!isNaN(num) && num > 0) return Math.round(num * 1000000);
     }
+
+    const thousandMatch = lower.match(/(?:dưới|tầm|khoảng|<=|nhỏ hơn|tối đa|budget|giá|ngân sách)?\s*(\d+(?:[.,]\d+)?)\s*(k|nghìn|ngàn)\b/i);
+    if (thousandMatch) {
+      const num = parseFloat(thousandMatch[1].replace(',', '.'));
+      if (!isNaN(num) && num > 0) return Math.round(num * 1000);
+    }
+
+    const rawVndMatch = lower.match(/(?:dưới|tầm|khoảng|<=|nhỏ hơn|tối đa)?\s*(\d{1,3}(?:[.,]\d{3})+)\s*(?:đ|vnd)?/i);
+    if (rawVndMatch) {
+      const num = parseInt(rawVndMatch[1].replace(/[.,]/g, ''), 10);
+      if (!isNaN(num) && num > 0) return num;
+    }
+
     return null;
   }
 
-  function generateSmartLocalResponse(userText: string, productsList?: any[], customersList?: any[], branchesList?: any[]) {
+  function findMatchingProduct(text: string, productsList?: any[]): any | null {
+    const list: any[] = (Array.isArray(productsList) && productsList.length > 0)
+      ? productsList
+      : (getStoreState().products || []);
+
+    if (!list || list.length === 0) return null;
+
+    const lower = text.toLowerCase();
+    const budget = extractBudgetFromText(lower);
+
+    // Keyword detection
+    const isPhone = lower.includes("điện thoại") || lower.includes("dien thoai") || lower.includes("phone") || lower.includes("smartphone") || lower.includes("iphone") || lower.includes("samsung") || lower.includes("galaxy");
+    const isLaptop = lower.includes("laptop") || lower.includes("macbook") || lower.includes("máy tính") || lower.includes("may tinh");
+    const isAudio = lower.includes("tai nghe") || lower.includes("headphone") || lower.includes("airpods") || lower.includes("loa") || lower.includes("sony") || lower.includes("wh-1000xm5");
+    const isWatch = lower.includes("đồng hồ") || lower.includes("dong ho") || lower.includes("watch") || lower.includes("series 9");
+    const isAccessory = lower.includes("phụ kiện") || lower.includes("phu kien") || lower.includes("sạc") || lower.includes("cáp") || lower.includes("ốp") || lower.includes("chuột") || lower.includes("bàn phím");
+
+    // If budget is specified
+    if (budget !== null && budget > 0) {
+      let filtered = list.filter((p: any) => Number(p.price || 0) <= budget && Number(p.price || 0) > 0);
+      if (isPhone) filtered = filtered.filter((p: any) => /điện thoại|phone|galaxy|iphone|samsung/i.test(p.category || "") || /galaxy|iphone|samsung/i.test(p.name || ""));
+      else if (isLaptop) filtered = filtered.filter((p: any) => /laptop|macbook|máy tính/i.test(p.category || "") || /macbook|thinkpad|dell|asus/i.test(p.name || ""));
+      else if (isAudio) filtered = filtered.filter((p: any) => /tai nghe|âm thanh|audio/i.test(p.category || "") || /airpods|sony|wh-|tai nghe/i.test(p.name || ""));
+      else if (isWatch) filtered = filtered.filter((p: any) => /đồng hồ|watch/i.test(p.category || "") || /watch/i.test(p.name || ""));
+      else if (isAccessory) filtered = filtered.filter((p: any) => /phụ kiện|accessory/i.test(p.category || "") || /sạc|cáp|chuột/i.test(p.name || ""));
+
+      if (filtered.length > 0) {
+        // Sort by price descending to get best product matching budget, preferring in-stock
+        filtered.sort((a: any, b: any) => {
+          if ((b.stock > 0) !== (a.stock > 0)) return b.stock > 0 ? 1 : -1;
+          return Number(b.price || 0) - Number(a.price || 0);
+        });
+        return filtered[0];
+      }
+    }
+
+    // Direct exact or partial name / SKU matching
+    for (const p of list) {
+      const pNameLower = (p.name || "").toLowerCase();
+      const pCodeLower = (p.code || p.sku || "").toLowerCase();
+      if (pCodeLower && lower.includes(pCodeLower)) return p;
+      if (pNameLower && lower.includes(pNameLower)) return p;
+    }
+
+    // Specific electronic alias matching
+    if (lower.includes("galaxy") || lower.includes("a55") || (lower.includes("samsung") && !lower.includes("tai nghe"))) {
+      const match = list.find((p: any) => /galaxy|a55|samsung/i.test(p.name));
+      if (match) return match;
+    }
+    if (lower.includes("iphone") || lower.includes("15 pro")) {
+      const match = list.find((p: any) => /iphone/i.test(p.name));
+      if (match) return match;
+    }
+    if (lower.includes("macbook")) {
+      const match = list.find((p: any) => /macbook/i.test(p.name));
+      if (match) return match;
+    }
+    if (lower.includes("airpods")) {
+      const match = list.find((p: any) => /airpods/i.test(p.name));
+      if (match) return match;
+    }
+    if (lower.includes("wh-1000xm5") || (lower.includes("sony") && lower.includes("tai nghe"))) {
+      const match = list.find((p: any) => /wh-1000xm5|sony/i.test(p.name));
+      if (match) return match;
+    }
+    if (lower.includes("watch") || lower.includes("đồng hồ")) {
+      const match = list.find((p: any) => /watch/i.test(p.name));
+      if (match) return match;
+    }
+
+    return null;
+  }
+
+  function summarizeOrdersForAi(ordersList: any[]) {
+    const completedOrders = (Array.isArray(ordersList) ? ordersList : []).filter((order) => order.status === 'completed');
+    const todayKey = new Date().toLocaleDateString('en-CA');
+    const todayOrders = completedOrders.filter((order) => String(order.createdAt || '').slice(0, 10) === todayKey);
+    const todayRevenue = todayOrders.reduce((sum, order) => sum + Number(order.total || 0), 0);
+    const allRevenue = completedOrders.reduce((sum, order) => sum + Number(order.total || 0), 0);
+    return `Hôm nay (${todayKey}): ${todayOrders.length} đơn hoàn tất, doanh thu ${todayRevenue.toLocaleString('vi-VN')}đ.
+Tổng đơn hoàn tất trong hệ thống: ${completedOrders.length}, tổng doanh thu: ${allRevenue.toLocaleString('vi-VN')}đ.
+${todayOrders.length > 0 ? todayOrders.map((order) => `- ${order.code}: ${Number(order.total || 0).toLocaleString('vi-VN')}đ, ${order.items?.length || 0} dòng sản phẩm`).join('\n') : 'Chưa có đơn hoàn tất trong ngày hiện tại.'}`;
+  }
+
+  function generateSmartLocalResponse(
+    userText: string,
+    productsList?: any[],
+    customersList?: any[],
+    branchesList?: any[],
+    ordersList?: any[]
+  ): { reply: string; matchedProduct?: any } {
     const lower = userText.toLowerCase();
+    const products = Array.isArray(productsList) ? productsList : (getStoreState().products || []);
+    const customers = Array.isArray(customersList) ? customersList : [];
+    const completedOrders = (Array.isArray(ordersList) ? ordersList : []).filter((order: any) => order.status === 'completed');
+    const todayKey = new Date().toLocaleDateString('en-CA');
+    const todayOrders = completedOrders.filter((order: any) => String(order.createdAt || '').slice(0, 10) === todayKey);
+    const todayRevenue = todayOrders.reduce((sum: number, order: any) => sum + Number(order.total || 0), 0);
+    const allRevenue = completedOrders.reduce((sum: number, order: any) => sum + Number(order.total || 0), 0);
 
-    if (lower.includes("doanh thu") || lower.includes("hôm nay") || lower.includes("bán được")) {
+    // 1. Revenue & Sales Queries
+    if (lower.includes("doanh thu") || lower.includes("hôm nay") || lower.includes("bán được") || lower.includes("doanh số")) {
       return {
-        reply: `Chào bạn! Hôm nay hệ thống ghi nhận doanh thu đạt **12.500.000đ** (18 đơn hàng), **↗️ tăng 12%** so với cùng kỳ ngày hôm qua.
-
-- **Sản phẩm bán chạy nhất**: Áo Thun Trắng Basic Premium (12 cái), iPhone 15 Pro Max (1 máy).
-- **Hình thức thanh toán phổ biến**: Chuyển khoản QR (55%), Tiền mặt (35%), Thẻ (10%).`,
+        reply: todayOrders.length > 0
+          ? `📊 **Báo cáo Doanh thu Hôm nay (${todayKey}):**\n- Doanh thu: **${todayRevenue.toLocaleString('vi-VN')}đ**\n- Số đơn hoàn tất: **${todayOrders.length} hóa đơn**\n- Tổng tích lũy toàn hệ thống: **${allRevenue.toLocaleString('vi-VN')}đ** (${completedOrders.length} đơn).\n\n*Dữ liệu được trích xuất trực tiếp từ cơ sở dữ liệu SQLite của SmartShop.*`
+          : `📊 **Báo cáo Doanh thu:**\nHôm nay (${todayKey}) chưa phát sinh đơn hoàn tất mới. Tổng doanh thu lũy kế toàn hệ thống hiện đạt **${allRevenue.toLocaleString('vi-VN')}đ** từ **${completedOrders.length} đơn hoàn tất**.`,
       };
     }
 
-    if (lower.includes("tồn kho") || lower.includes("hết hàng") || lower.includes("còn hàng")) {
+    // 2. Inventory & Stock Alerts
+    if (lower.includes("tồn kho") || lower.includes("hết hàng") || lower.includes("còn hàng") || lower.includes("nhập hàng") || lower.includes("sắp hết")) {
+      const lowStock = products.filter((p: any) => Number(p.stock || 0) > 0 && Number(p.stock || 0) <= 5).slice(0, 8);
+      const outOfStock = products.filter((p: any) => Number(p.stock || 0) === 0).slice(0, 8);
+      const totalUnits = products.reduce((sum: number, p: any) => sum + Number(p.stock || 0), 0);
+
       return {
-        reply: `📦 **Báo cáo Tồn kho Cửa hàng:**
-- **Sản phẩm sắp hết hàng (< 5 cái)**:
-  + *iPhone 14 Pro Max 256GB*: Còn **3 cái**
-  + *MacBook Pro M3 14-inch*: Còn **5 cái**
-- **Sản phẩm đã hết hàng (0 cái)**:
-  + *Sony WH-1000XM5*: Đã lập phiếu nhập kho **20 cái** (Đang giao)
-  + *Ốp lưng iPhone 15 Pro Max*: Đã lập phiếu nhập kho **50 cái**`,
+        reply: products.length === 0
+          ? '📦 Kho hàng hiện chưa có dữ liệu sản phẩm.'
+          : `📦 **Báo cáo Tồn kho & Cảnh báo Hàng hóa:**
+- **Tổng số lượng thiết bị trong kho:** ${totalUnits.toLocaleString('vi-VN')} máy / phụ kiện (${products.length} mã).
+- ⚠️ **Sắp hết hàng (tồn ≤ 5):** ${lowStock.length > 0 ? lowStock.map((p: any) => `**${p.name}** (còn ${p.stock})`).join(', ') : 'Không có mặt hàng nào.'}
+- 🚨 **Hết hàng (tồn 0):** ${outOfStock.length > 0 ? outOfStock.map((p: any) => `**${p.name}**`).join(', ') : 'Không có mặt hàng nào.'}
+
+💡 *Khuyến nghị: Bạn có thể vào mục "Nhập hàng" để lập phiếu nhập bổ sung cho các mặt hàng sắp hết.*`,
+        matchedProduct: lowStock[0] || outOfStock[0] || undefined,
       };
     }
 
-    if (lower.includes("khách hàng") || lower.includes("vip")) {
+    // 3. Customer & VIP Queries
+    if (lower.includes("khách hàng") || lower.includes("vip") || lower.includes("thành viên")) {
+      const vipCustomers = customers.filter((c: any) => (c.totalSpent || 0) > 20000000 || c.loyaltyTier === 'VIP');
       return {
-        reply: `👥 **Chăm sóc Khách hàng:**
-- Tổng cộng có **3 khách hàng thân thiết** trong hệ thống.
-- **Top 1 chi tiêu**: Khách hàng *Nguyễn Văn Hùng (VVIP)* với tổng chi tiêu **125.000.000đ** (chiết khấu 5%, 2.450 điểm thưởng).
-- Gợi ý: Gửi mã ưu đãi độc quyền giảm thêm 5% cho phụ kiện trong tháng sinh nhật!`,
+        reply: customers.length > 0
+          ? `👥 **Thống kê Khách hàng SmartShop:**
+- Tổng khách hàng đã lưu hồ sơ: **${customers.length} khách hàng**.
+- Nhóm khách hàng VIP / Thân thiết: **${vipCustomers.length} thành viên**.
+- Tích điểm thành viên: Giảm 5% cho đơn tiếp theo hoặc bảo hành mở rộng 18 tháng.`
+          : 'Hiện chưa có hồ sơ khách hàng nào trong hệ thống. Bạn có thể thêm khách hàng mới trực tiếp tại màn hình Bán hàng POS.',
       };
     }
+
+    // 4. Cross-sell / Combo Queries
+    if (lower.includes("bán kèm") || lower.includes("combo") || lower.includes("cross-sell") || lower.includes("upsell") || lower.includes("mua kèm")) {
+      const accessory = products.find((p: any) => /phụ kiện|tai nghe|sạc|airpods/i.test(p.category || "") || /airpods|sạc|tai nghe/i.test(p.name || ""));
+      const flagship = products.find((p: any) => /iphone|galaxy|macbook/i.test(p.name || ""));
+
+      return {
+        reply: `💡 **Chiến lược Bán chéo (Cross-sell / Combo) Đề xuất:**
+1. **Combo Thiết bị Chính + Phụ kiện:**
+   - Khi khách chọn mua ${flagship ? `**${flagship.name}**` : 'Điện thoại / Laptop'}, nhân viên nên gợi ý ngay gói sạc nhanh 30W và tai nghe chống ồn.
+   ${accessory ? `- Sản phẩm bán kèm tối ưu: **${accessory.name}** (Giá: **${Number(accessory.price || 0).toLocaleString('vi-VN')}đ**).` : ''}
+2. **Ưu đãi Combo:** Giảm ngay 10% giá phụ kiện khi thanh toán trong cùng 1 hóa đơn, vừa tăng giá trị đơn hàng (AOV), vừa kích cầu tồn kho phụ kiện.`,
+        matchedProduct: accessory || flagship || undefined,
+      };
+    }
+
+    // 5. Product Consultation / Budget Filtering
+    const matchedProduct = findMatchingProduct(userText, products);
+    const budget = extractBudgetFromText(lower);
+
+    if (matchedProduct) {
+      const inStock = Number(matchedProduct.stock || 0) > 0;
+      const budgetNote = budget ? ` phù hợp với ngân sách dưới **${budget.toLocaleString('vi-VN')}đ** của bạn:` : ':';
+
+      return {
+        reply: `📱 **Tư vấn Sản phẩm Đề xuất**${budgetNote}
+
+- **${matchedProduct.name}**
+- 🏷️ **Giá niêm yết:** **${Number(matchedProduct.price || 0).toLocaleString('vi-VN')}đ**
+- 📦 **Tình trạng:** ${inStock ? `Còn hàng (**${matchedProduct.stock} cái** trong kho)` : '⚠️ Tạm thời hết hàng (có thể đặt trước)'}
+- 📂 **Danh mục:** ${matchedProduct.category || 'Thiết bị điện tử'}
+
+💡 **Chính sách ưu đãi:**
+- Bảo hành 12 tháng chính hãng, 1-đổi-1 trong 30 ngày nếu có lỗi phần cứng từ nhà sản xuất.
+- Hỗ trợ thanh toán nhanh bằng VietQR động trực tiếp tại quầy POS.
+- Tặng voucher giảm 10% khi mua kèm phụ kiện (ốp lưng, cường lực, củ sạc nhanh).`,
+        matchedProduct,
+      };
+    }
+
+    // 6. Default Welcome / Overview
+    return {
+      reply: `Tôi là **Trợ lý Bán hàng & Phân tích SmartSale AI**. Tôi có thể hỗ trợ bạn:
+- 📱 **Tư vấn sản phẩm:** Tra cứu sản phẩm theo ngân sách (vd: *"Tư vấn cho tôi điện thoại dưới 15 triệu"* hoặc *"Có laptop nào dưới 40 triệu"*).
+- 📊 **Kinh doanh & Doanh thu:** Xem doanh thu và đơn hàng hôm nay (vd: *"Doanh thu hôm nay thế nào?"*).
+- 📦 **Kho bãi & Tồn kho:** Cảnh báo hàng sắp hết, hết hàng (vd: *"Kiểm tra tồn kho sản phẩm"*).
+- 🛒 **Bán kèm & Combo:** Gợi ý kịch bản cross-sell cho thu ngân tại quầy.
+- 👥 **Khách hàng:** Tra cứu danh sách khách hàng VIP và chính sách tích điểm.
+
+Bạn cần tôi hỗ trợ kiểm tra thông tin gì ngay bây giờ?`,
+    };
+  }
+
+  function generateHeuristicBusinessAnalysis(productsList: any[], ordersList: any[], customersList: any[]) {
+    const products = Array.isArray(productsList) ? productsList : [];
+    const orders = Array.isArray(ordersList) ? ordersList : [];
+    const completedOrders = orders.filter((o: any) => o.status === 'completed');
+    const totalRevenue = completedOrders.reduce((sum: number, o: any) => sum + Number(o.total || 0), 0);
+    const totalInventoryCost = products.reduce((sum: number, p: any) => sum + Number(p.stock || 0) * Number(p.costPrice || 0), 0);
+    const lowStock = products.filter((p: any) => Number(p.stock || 0) <= 10).sort((a: any, b: any) => a.stock - b.stock);
+    const outOfStock = products.filter((p: any) => Number(p.stock || 0) === 0);
+    const topSeller = [...products].sort((a: any, b: any) => (b.soldCount || 0) - (a.soldCount || 0))[0] || products[0];
+    const complementaryProd = products.find((p: any) => p.id !== topSeller?.id && p.stock > 0) || products[1] || topSeller;
+
+    const topMarginProd = [...products].sort((a: any, b: any) =>
+      ((b.price - b.costPrice) / Math.max(b.price, 1)) - ((a.price - a.costPrice) / Math.max(a.price, 1))
+    )[0];
+
+    const marginPct = topMarginProd
+      ? Math.round(((topMarginProd.price - topMarginProd.costPrice) / Math.max(topMarginProd.price, 1)) * 100)
+      : 25;
+
+    // Calculate dynamic health score
+    let score = 86;
+    if (outOfStock.length > 0) score -= Math.min(15, outOfStock.length * 4);
+    if (lowStock.length > 3) score -= 6;
+    if (completedOrders.length > 5) score += 6;
+    if (totalRevenue > 50000000) score += 4;
+    score = Math.max(45, Math.min(96, score));
+
+    const healthEvaluation = score >= 85
+      ? "Hoạt động kinh doanh ổn định và tích cực. Vốn lưu động được phân bổ hợp lý, cần tiếp tục phát huy các gói bán kèm."
+      : score >= 70
+      ? "Hoạt động đạt mức khá. Cần chú trọng cảnh báo hàng thiếu hụt và xử lý các mặt hàng chậm luân chuyển."
+      : "Cảnh báo vận hành: Tồn kho thiếu cân đối hoặc tỷ lệ hàng sắp đứt tồn cao, cần tái cơ cấu kế hoạch nhập hàng.";
+
+    const criticalProd = lowStock[0] || outOfStock[0];
 
     return {
-      reply: `Tôi là **Trợ lý SmartSale AI**. Tôi có thể hỗ trợ bạn:
-- 📊 Tra cứu doanh thu, lợi nhuận và đơn hàng hôm nay
-- 📦 Kiểm tra tồn kho sản phẩm, cảnh báo hàng sắp hết và lập phiếu nhập
-- 🛒 Gợi ý bán chéo (upsell/cross-sell) cho thu ngân khi tạo đơn
-- 👥 Tra cứu thông tin khách hàng VIP và ưu đãi thành viên.
-
-Bạn cần tôi kiểm tra thông tin gì ngay bây giờ?`,
+      businessHealthScore: score,
+      healthEvaluation,
+      keyInsights: {
+        crossSell: {
+          title: topSeller && complementaryProd ? `Combo bán chạy: ${topSeller.name} + ${complementaryProd.name}` : "Combo kích cầu phụ kiện công nghệ",
+          description: topSeller && complementaryProd
+            ? `Khách hàng quan tâm ${topSeller.name} có xu hướng mua kèm ${complementaryProd.name}. Ghép combo giảm nhẹ 5-8% để đẩy mạnh doanh số trung bình/đơn.`
+            : "Ghép cặp các thiết bị chính với phụ kiện bảo vệ và sạc nhanh để gia tăng biên lợi nhuận.",
+          expectedRevenueIncrease: "+18% đến +25% AOV",
+          primaryProductName: topSeller?.name,
+          comboProductName: complementaryProd?.name,
+          primaryProductId: topSeller?.id,
+          comboProductId: complementaryProd?.id,
+        },
+        inventoryRisk: {
+          title: criticalProd ? `Nguy cơ đứt hàng: ${criticalProd.name}` : "Tồn kho trong tầm kiểm soát",
+          description: criticalProd
+            ? `${criticalProd.name} hiện chỉ còn ${criticalProd.stock} cái trong kho. Tốc độ xuất kho cho thấy rủi ro thiếu hàng trong các ca bán cao điểm tới.`
+            : "Toàn bộ danh mục đều duy trì mức tồn an toàn trên 10 đơn vị sản phẩm.",
+          criticalStock: criticalProd ? criticalProd.stock : 0,
+          productName: criticalProd?.name,
+          productId: criticalProd?.id,
+          urgency: (criticalProd && criticalProd.stock <= 3 ? "high" : "medium") as "high" | "medium" | "low",
+        },
+        marginOptimization: {
+          title: topMarginProd ? `Sản phẩm biên lợi nhuận cao: ${topMarginProd.name}` : "Tối ưu hóa giá bán",
+          description: topMarginProd
+            ? `${topMarginProd.name} đạt tỷ suất biên lợi nhuận gộp ${marginPct}%. Đề xuất ưu tiên vị trí hiển thị và huấn luyện thu ngân tư vấn mã hàng này.`
+            : "Rà soát lại giá nhập và chiết khấu nhà cung cấp để nâng tỷ suất lợi nhuận trung bình.",
+          marginPercent: marginPct,
+          productName: topMarginProd?.name,
+          productId: topMarginProd?.id,
+          recommendation: "Đẩy mạnh trưng bày tại khu vực trung tâm cửa hàng và trang chủ website.",
+        },
+        salesForecast: {
+          title: "Dự báo dòng tiền & doanh số tuần tới",
+          description: completedOrders.length > 0
+            ? `Dựa trên ${completedOrders.length} giao dịch gần nhất với tổng doanh thu ${totalRevenue.toLocaleString('vi-VN')}đ, tốc độ thanh toán duy trì nhịp tăng trưởng ổn định.`
+            : "Hệ thống đang tích lũy dữ liệu đơn hàng ban đầu để thiết lập biểu đồ dự báo xu hướng.",
+          projectedRevenueNextWeek: totalRevenue > 0 ? `${Math.round(totalRevenue * 1.25).toLocaleString('vi-VN')}đ` : "Đang tính toán...",
+          trend: (completedOrders.length > 2 ? "up" : "stable") as "up" | "stable" | "down",
+        },
+      },
+      executiveSummary: {
+        cashFlowAnalysis: `Giá trị vốn hàng tồn hiện hữu đạt ${totalInventoryCost.toLocaleString('vi-VN')}đ trên tổng số ${products.length} mã sản phẩm. Dòng tiền bán hàng ghi nhận ${totalRevenue.toLocaleString('vi-VN')}đ.`,
+        workingCapitalStatus: totalInventoryCost > 50000000 ? "Vốn lưu động tập trung nhiều ở nhóm sản phẩm giá trị cao." : "Cấu trúc vốn tồn kho gọn gàng, rủi ro đọng vốn thấp.",
+        inventoryTurnoverRatio: completedOrders.length > 5 ? "Tốc độ luân chuyển hàng hóa đạt ngưỡng tối ưu ngành bán lẻ điện tử." : "Cần thêm chiến dịch kích cầu để gia tăng vòng quay vốn.",
+      },
+      actionPlan7Days: [
+        {
+          category: "Bổ sung tồn kho",
+          action: criticalProd ? `Lập đơn đặt hàng nhập kho bổ sung cho ${criticalProd.name} (${criticalProd.stock} cái).` : "Kiểm kê định kỳ các mã hàng chủ lực.",
+          priority: "high" as const,
+        },
+        {
+          category: "Chương trình Combo",
+          action: topSeller && complementaryProd ? `Tạo mã giảm giá combo kết hợp ${topSeller.name} và ${complementaryProd.name}.` : "Thiết lập combo phụ kiện tại quầy thu ngân.",
+          priority: "medium" as const,
+        },
+        {
+          category: "Trưng bày & Bán hàng",
+          action: topMarginProd ? `Ưu tiên tư vấn ${topMarginProd.name} để tối đa hóa lợi nhuận ca bán hàng.` : "Đào tạo nhân viên giới thiệu ưu đãi VietQR.",
+          priority: "medium" as const,
+        },
+        {
+          category: "Thanh toán POS",
+          action: "Khuyến khích khách hàng quét VietQR tĩnh tại quầy để rút ngắn thời gian xếp hàng dưới 15 giây.",
+          priority: "low" as const,
+        },
+      ],
+      promotionalIdeas: [
+        {
+          title: "Combo Tiết Kiệm Công Nghệ",
+          targetProducts: topSeller?.name || "Thiết bị chính",
+          mechanism: "Giảm ngay 10% cho phụ kiện khi mua kèm máy chính trong cùng 1 hóa đơn.",
+        },
+        {
+          title: "Khách hàng thân thiết hoàn xu",
+          targetProducts: "Toàn bộ danh mục điện tử",
+          mechanism: "Tích điểm 5% cho thành viên thanh toán qua chuyển khoản ngân hàng tự động.",
+        },
+      ],
     };
+  }
+
+  function generateHeuristicAnalystAnswer(question: string, products: any[], orders: any[]) {
+    const lower = question.toLowerCase();
+    const completedOrders = orders.filter((o: any) => o.status === 'completed');
+    const totalRevenue = completedOrders.reduce((sum: number, o: any) => sum + Number(o.total || 0), 0);
+    const lowStock = products.filter((p: any) => Number(p.stock || 0) <= 10);
+    const topSeller = [...products].sort((a: any, b: any) => (b.soldCount || 0) - (a.soldCount || 0))[0];
+
+    if (lower.includes("doanh thu") || lower.includes("tăng") || lower.includes("bán hàng")) {
+      return `### 💡 Đề xuất Tăng trưởng Doanh thu & Tối ưu Bán hàng:
+1. **Thúc đẩy Giá trị Đơn hàng Trung bình (AOV)**:
+   - Hiện tổng doanh thu ghi nhận: **${totalRevenue.toLocaleString('vi-VN')}đ** từ **${completedOrders.length} đơn hoàn tất**.
+   - Hãy thiết lập chính sách bán kèm phụ kiện với sản phẩm chủ lực **${topSeller ? topSeller.name : 'các dòng điện thoại/laptop'}**.
+2. **Kích cầu nhóm sản phẩm tồn kho**:
+   - Hiện có **${lowStock.length} mã hàng** có mức tồn dưới 10 cái và cần cân đối lại dòng tiền.
+3. **Tận dụng kênh thanh toán VietQR**:
+   - Khách thanh toán quét mã nhanh giúp giảm tỷ lệ bỏ giỏ tại quầy lên đến 25%.`;
+    }
+
+    if (lower.includes("tồn kho") || lower.includes("nhập hàng") || lower.includes("hết hàng")) {
+      return `### 📦 Chiến lược Tồn kho & Quản trị Rủi ro:
+1. **Các mặt hàng cấp bách**:
+${lowStock.slice(0, 5).map((p: any) => `   - **${p.name}**: Còn ${p.stock} cái (Mã: ${p.code || p.id}).`).join('\n') || '   - Tất cả mặt hàng đều có tồn kho an toàn.'}
+2. **Khuyến nghị hành động**:
+   - Tạo ngay phiếu nhập hàng dự phòng cho các mã có mức tồn dưới 5 cái.
+   - Với các mặt hàng bán chậm, cân nhắc xả tồn bằng cách tặng kèm hoặc chiết khấu bậc thang.`;
+    }
+
+    return `### 📊 Phân tích Chiến lược Tổng thể từ AI Analyst:
+Dựa trên dữ liệu thực tế gồm **${products.length} mã sản phẩm** và **${completedOrders.length} đơn hoàn tất**:
+1. **Sản phẩm dẫn đầu**: **${topSeller ? topSeller.name : 'Đang cập nhật'}** (đã bán ${topSeller?.soldCount || 0} sản phẩm).
+2. **Dòng tiền**: Tổng doanh thu đã thanh toán đạt **${totalRevenue.toLocaleString('vi-VN')}đ**.
+3. **Kế hoạch ưu tiên**: Bổ sung hàng cho các sản phẩm bán chạy và tăng tốc độ xử lý đơn hàng tại quầy POS.`;
   }
 
   // Vite middleware for dev or static for production

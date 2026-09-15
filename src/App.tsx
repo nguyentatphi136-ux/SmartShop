@@ -10,6 +10,8 @@ import {
   ChatSession,
   ChatMessage,
   RealtimeActivity,
+  PermissionAuditEntry,
+  StaffAuditEntry,
 } from './types';
 import {
   INITIAL_PRODUCTS,
@@ -30,8 +32,7 @@ import { PosScreen } from './components/PosScreen';
 import { ProductsScreen } from './components/ProductsScreen';
 import { CustomersScreen } from './components/CustomersScreen';
 import { InvoicesScreen } from './components/InvoicesScreen';
-import { InventoryScreen } from './components/InventoryScreen';
-import { RestockScreen } from './components/RestockScreen';
+import { InventoryBranchScreen } from './components/InventoryBranchScreen';
 import { RevenueReportScreen, AnalyticsReportScreen } from './components/ReportsScreen';
 import { AiAssistantScreen } from './components/AiAssistantScreen';
 import { AiAnalystScreen } from './components/AiAnalystScreen';
@@ -108,6 +109,10 @@ export function App() {
   const { language, t, formatCurr } = useLanguage();
   // Navigation & theme state
   const [currentTab, setCurrentTab] = useState<MainTab>('dashboard');
+
+  useEffect(() => {
+    if ((currentTab as string) === 'restock') setCurrentTab('inventory');
+  }, [currentTab]);
   const [isDark, setIsDark] = useState<boolean>(() => {
     try {
       return localStorage.getItem('smartsale_dark_mode') === 'true';
@@ -187,16 +192,70 @@ export function App() {
   const [rolePermissions, setRolePermissions] = useState<RolePermissionsMatrix>(() => {
     return getStoredRolePermissions();
   });
+  const [permissionAuditHistory, setPermissionAuditHistory] = useState<PermissionAuditEntry[]>([]);
+  const [staffAuditHistory, setStaffAuditHistory] = useState<StaffAuditEntry[]>([]);
+
+  const recordStaffAudit = async (action: StaffAuditEntry['action'], target?: StaffUser, details?: string) => {
+    const token = localStorage.getItem('smartsale_session_token');
+    if (!token) {
+      showToast('Không thể lưu lịch sử nhân viên', 'Phiên đăng nhập đã hết hạn, vui lòng đăng nhập lại');
+      return;
+    }
+    try {
+      const response = await fetch('/api/store/staff/audit', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ action, targetId: target?.id, targetName: target?.name, details }),
+      });
+      const data = await response.json();
+      if (response.ok && data.success) setStaffAuditHistory(data.history);
+      else showToast('Không thể lưu lịch sử nhân viên', data.error || 'Vui lòng thử lại');
+    } catch (error) {
+      console.error('Staff audit persistence failed:', error);
+      showToast('Không thể kết nối máy chủ audit', 'Lịch sử thao tác nhân viên chưa được lưu');
+    }
+  };
+
+  const recordPermissionAudit = async (action: 'update' | 'reset', previous: RolePermissionsMatrix, next: RolePermissionsMatrix) => {
+    const changedRoles = (Object.keys(next) as RoleType[]).filter((role) => JSON.stringify(previous[role]) !== JSON.stringify(next[role]));
+    const changedModules = Array.from(new Set(changedRoles.flatMap((role) =>
+      Object.keys(next[role]).filter((module) => previous[role][module] !== next[role][module])
+    )));
+    const token = localStorage.getItem('smartsale_session_token');
+    if (!token) return;
+    try {
+      const response = await fetch('/api/store/permissions/audit', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ action, changedRoles, changedModules }),
+      });
+      const data = await response.json();
+      if (response.ok && data.success) {
+        setPermissionAuditHistory(data.history);
+      } else {
+        showToast('Không thể lưu lịch sử phân quyền', data.error || 'Vui lòng đăng nhập lại và thử lại');
+      }
+    } catch (error) {
+      console.error('Permission audit persistence failed:', error);
+      showToast('Không thể kết nối máy chủ audit', 'Lịch sử chưa được lưu');
+    }
+  };
 
   const handleUpdateRolePermissions = (matrix: RolePermissionsMatrix) => {
+    const previous = rolePermissions;
     setRolePermissions(matrix);
     saveRolePermissions(matrix);
+    void recordPermissionAudit('update', previous, matrix);
+    void recordStaffAudit('permission_update', undefined, 'Cập nhật ma trận phân quyền');
     showToast('Đã cập nhật phân quyền', 'Ma trận quyền hạn mới đã có hiệu lực trên toàn hệ thống');
   };
 
   const handleResetRolePermissions = () => {
+    const previous = rolePermissions;
     const defaultMatrix = resetRolePermissionsToDefault();
     setRolePermissions(defaultMatrix);
+    void recordPermissionAudit('reset', previous, defaultMatrix);
+    void recordStaffAudit('permission_reset', undefined, 'Khôi phục ma trận phân quyền mặc định');
     showToast('Đã khôi phục phân quyền mặc định', 'Tất cả vai trò đã quay về quyền hạn ban đầu');
   };
 
@@ -208,6 +267,7 @@ export function App() {
       setOriginalAdminUser(currentUser);
     }
     setCurrentUser(staff);
+    void recordStaffAudit('impersonate', staff, 'Bắt đầu trải nghiệm thử vai trò');
     if (!canUserAccessTab(staff, currentTab, rolePermissions)) {
       if (staff.role === 'cashier') {
         setCurrentTab('pos');
@@ -256,52 +316,128 @@ export function App() {
     }
   };
 
+  const requestStoreMutation = async (path: string, method: 'POST' | 'PATCH' | 'DELETE' | 'PUT', body?: unknown) => {
+    const token = localStorage.getItem('smartsale_session_token');
+    if (!token) throw new Error('Phiên đăng nhập đã hết hạn.');
+    const response = await fetch(path, {
+      method,
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+    const data = await response.json();
+    if (!response.ok || !data.success) throw new Error(data.error || 'Không thể cập nhật dữ liệu.');
+    return data;
+  };
+
   // Staff CRUD Handlers
-  const handleAddStaff = (newStaffData: Omit<StaffUser, 'id'>) => {
-    const newStaff: StaffUser = {
-      ...newStaffData,
-      id: `user-${Date.now()}`,
-    };
-    setStaffList((prev) => [...prev, newStaff]);
-    showToast(
-      `Đã thêm nhân viên: ${newStaff.name}`,
-      `Vai trò: ${getRoleDetails(newStaff.role, language).label}`
-    );
-  };
-
-  const handleUpdateStaff = (updatedStaff: StaffUser) => {
-    setStaffList((prev) =>
-      prev.map((s) => (s.id === updatedStaff.id ? updatedStaff : s))
-    );
-    if (currentUser?.id === updatedStaff.id) {
-      setCurrentUser(updatedStaff);
-      try {
-        localStorage.setItem('smartsale_auth_user', JSON.stringify(updatedStaff));
-      } catch (e) {}
+  const handleAddStaff = async (newStaffData: Omit<StaffUser, 'id'>) => {
+    try {
+      const data = await requestStoreMutation('/api/store/staff', 'POST', newStaffData);
+      const newStaff: StaffUser = data.staff;
+      setStaffList(data.state.staffList);
+      void recordStaffAudit('create', newStaff, `Tạo tài khoản với vai trò ${newStaff.role}`);
+      showToast(
+        `Đã thêm nhân viên: ${newStaff.name}`,
+        `Vai trò: ${getRoleDetails(newStaff.role, language).label}`
+      );
+    } catch (error) {
+      showToast('Không thể tạo nhân sự', error instanceof Error ? error.message : 'Vui lòng thử lại');
     }
-    showToast(`Đã cập nhật nhân sự: ${updatedStaff.name}`);
   };
 
-  const handleDeleteStaff = (staffId: string) => {
+  const handleUpdateStaff = async (updatedStaff: StaffUser) => {
+    const previousStaff = staffList.find((staff) => staff.id === updatedStaff.id);
+    try {
+      const data = await requestStoreMutation(`/api/store/staff/${updatedStaff.id}`, 'PUT', updatedStaff);
+      setStaffList(data.state.staffList);
+      const action = previousStaff?.status !== updatedStaff.status
+        ? updatedStaff.status === 'active' ? 'activate' : 'deactivate'
+        : 'update';
+      void recordStaffAudit(action, updatedStaff, `Cập nhật nhân sự${previousStaff?.role !== updatedStaff.role ? `, đổi vai trò từ ${previousStaff?.role} sang ${updatedStaff.role}` : ''}`);
+      if (currentUser?.id === updatedStaff.id) {
+        setCurrentUser(updatedStaff);
+        try {
+          localStorage.setItem('smartsale_auth_user', JSON.stringify(updatedStaff));
+        } catch (e) {}
+      }
+      showToast(`Đã cập nhật nhân sự: ${updatedStaff.name}`);
+    } catch (error) {
+      showToast('Không thể cập nhật nhân sự', error instanceof Error ? error.message : 'Vui lòng thử lại');
+    }
+  };
+
+  const handleDeleteStaff = async (staffId: string) => {
     const staffToDelete = staffList.find((s) => s.id === staffId);
-    setStaffList((prev) => prev.filter((s) => s.id !== staffId));
-    showToast(`Đã xóa tài khoản: ${staffToDelete?.name || staffId}`);
+    try {
+      const data = await requestStoreMutation(`/api/store/staff/${staffId}`, 'DELETE');
+      setStaffList(data.state.staffList);
+      void recordStaffAudit('delete', staffToDelete, 'Xóa tài khoản nhân viên');
+      showToast(`Đã xóa tài khoản: ${staffToDelete?.name || staffId}`);
+    } catch (error) {
+      showToast('Không thể xóa nhân sự', error instanceof Error ? error.message : 'Vui lòng thử lại');
+    }
   };
 
   // Authentication State (Email login with OTP Verification)
-  const [currentUser, setCurrentUser] = useState<StaffUser | null>(() => {
-    try {
-      const saved = localStorage.getItem('smartsale_auth_user');
-      if (saved) return JSON.parse(saved);
-    } catch (e) {
-      console.error(e);
+  const [currentUser, setCurrentUser] = useState<StaffUser | null>(null);
+  const [isAuthChecking, setIsAuthChecking] = useState(true);
+
+  useEffect(() => {
+    const token = localStorage.getItem('smartsale_session_token');
+    if (!token) {
+      setIsAuthChecking(false);
+      return;
     }
-    return null;
-  });
+
+    fetch('/api/auth/session', { headers: { Authorization: `Bearer ${token}` } })
+      .then(async (response) => {
+        if (!response.ok) throw new Error('Session expired');
+        const data = await response.json();
+        setCurrentUser(data.user);
+        localStorage.setItem('smartsale_auth_user', JSON.stringify(data.user));
+      })
+      .catch(() => {
+        localStorage.removeItem('smartsale_session_token');
+        localStorage.removeItem('smartsale_auth_user');
+        setCurrentUser(null);
+      })
+      .finally(() => setIsAuthChecking(false));
+  }, []);
+
+  useEffect(() => {
+    if (isAuthChecking || !currentUser) return;
+
+    const token = localStorage.getItem('smartsale_session_token');
+    if (!token) return;
+
+    fetch('/api/store/state', { headers: { Authorization: `Bearer ${token}` } })
+      .then(async (response) => {
+        if (!response.ok) throw new Error('Không thể tải dữ liệu cửa hàng');
+        const data = await response.json();
+        setProducts(data.state.products);
+        setCustomers(data.state.customers);
+        setOrders(data.state.orders);
+        setRestockOrders(data.state.restockOrders);
+        setStaffList(data.state.staffList);
+        setPermissionAuditHistory(data.state.permissionAuditHistory || []);
+        setStaffAuditHistory(data.state.staffAuditHistory || []);
+      })
+      .catch((error) => {
+        console.error('Store state loading failed:', error);
+      });
+  }, [currentUser, isAuthChecking]);
 
   const handleLogout = useCallback(() => {
+    const token = localStorage.getItem('smartsale_session_token');
+    if (token) {
+      fetch('/api/auth/logout', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      }).catch(() => {});
+    }
     try {
       localStorage.removeItem('smartsale_auth_user');
+      localStorage.removeItem('smartsale_session_token');
     } catch (e) {}
     setCurrentUser(null);
     setOriginalAdminUser(null);
@@ -349,14 +485,14 @@ export function App() {
   }, [isDark]);
 
   // Real-time Engine State
-  const [realtimeActivities, setRealtimeActivities] = useState<RealtimeActivity[]>(INITIAL_ACTIVITIES);
-  const [isAutoStreamActive, setIsAutoStreamActive] = useState<boolean>(true);
+  const [realtimeActivities, setRealtimeActivities] = useState<RealtimeActivity[]>([]);
+  const [isAutoStreamActive, setIsAutoStreamActive] = useState<boolean>(false);
   const [streamIntervalSeconds, setStreamIntervalSeconds] = useState<number>(20);
-  const [latestActivity, setLatestActivity] = useState<RealtimeActivity | null>(INITIAL_ACTIVITIES[0]);
+  const [latestActivity, setLatestActivity] = useState<RealtimeActivity | null>(null);
 
   // POS State
   const [cart, setCart] = useState<CartItem[]>([]);
-  const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(INITIAL_CUSTOMERS[0]);
+  const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
 
   // AI Assistant Chat State
   const [chatSessions, setChatSessions] = useState<ChatSession[]>(INITIAL_CHAT_SESSIONS);
@@ -378,64 +514,48 @@ export function App() {
     total: number;
   } | null>(null);
 
-  // Data Mode State ('demo' or 'real')
-  const [dataMode, setDataMode] = useState<'demo' | 'real'>(() => {
-    try {
-      const saved = localStorage.getItem('smartsale_data_mode');
-      if (saved === 'real' || saved === 'demo') return saved;
-    } catch (e) {}
-    return 'demo';
-  });
+  // SmartShop runs only with real store data.
+  const dataMode = 'real' as const;
 
   // Real Data Handlers
-  const handleClearSampleOrders = () => {
-    setOrders([]);
-    setRealtimeActivities([]);
-    setLatestActivity(null);
-    showToast(
-      language === 'vi' ? 'Đã dọn sạch đơn hàng mẫu' : 'Sample orders cleared',
-      language === 'vi' ? 'Sẵn sàng ghi nhận doanh thu và hóa đơn thực tế' : 'Ready to record actual store revenue'
-    );
-  };
+  const handleClearSampleOrders = async () => {
+    const token = localStorage.getItem('smartsale_session_token');
+    if (!token) {
+      showToast('Phiên đăng nhập đã hết hạn', 'Vui lòng đăng nhập lại');
+      return;
+    }
 
-  const handleSetDataMode = (
-    newMode: 'demo' | 'real',
-    option?: 'clear_orders' | 'blank_store' | 'keep_products'
-  ) => {
-    setDataMode(newMode);
     try {
-      localStorage.setItem('smartsale_data_mode', newMode);
-    } catch (e) {}
-
-    if (newMode === 'real') {
-      setIsAutoStreamActive(false);
-      if (option === 'clear_orders') {
-        handleClearSampleOrders();
-      } else if (option === 'blank_store') {
-        handleResetStoreToEmpty();
-      } else {
-        showToast(
-          language === 'vi' ? '🟢 Đã bật Chế độ Dữ liệu Thật' : '🟢 Real Store Data Activated',
-          language === 'vi'
-            ? 'Đã tắt luồng đơn giả lập. Bắt đầu ghi nhận hóa đơn bán tại quầy POS.'
-            : 'Simulated orders stopped. Revenue now tracks your real POS invoices.'
-        );
-      }
-    } else {
-      setIsAutoStreamActive(true);
-      showToast(
-        language === 'vi' ? '🧪 Đã bật Chế độ Demo' : '🧪 Demo Mode Activated',
-        language === 'vi'
-          ? 'Hệ thống tự động kích hoạt luồng đơn hàng giả lập để thử nghiệm.'
-          : 'Simulating multi-channel incoming orders for demonstration.'
-      );
+      const response = await fetch('/api/store/real-mode/reset', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await response.json();
+      if (!response.ok || !data.success) throw new Error(data.error || 'Không thể xóa dữ liệu mẫu.');
+      setProducts(data.state.products);
+      setCustomers(data.state.customers);
+      setOrders(data.state.orders);
+      setRestockOrders(data.state.restockOrders);
+      setSelectedCustomer(null);
+      setCart([]);
+      setRealtimeActivities([]);
+      setLatestActivity(null);
+      showToast('Đã chuyển sang dữ liệu thật', 'Toàn bộ sản phẩm, khách hàng, đơn hàng và phiếu nhập mẫu đã được xóa');
+    } catch (error) {
+      showToast('Không thể chuyển sang dữ liệu thật', error instanceof Error ? error.message : 'Vui lòng thử lại');
     }
   };
 
-  const handleResetStoreToEmpty = () => {
-    setProducts([]);
-    setOrders([]);
-    setRestockOrders([]);
+  const handleSetDataMode = async (
+    newMode: 'demo' | 'real',
+    option?: 'clear_orders' | 'blank_store' | 'keep'
+  ) => {
+    if (newMode === 'real') await handleClearSampleOrders();
+  };
+
+  const handleResetStoreToEmpty = async () => {
+    await handleClearSampleOrders();
+    setCustomers([]);
     setCart([]);
     setRealtimeActivities([]);
     setLatestActivity(null);
@@ -454,13 +574,7 @@ export function App() {
   };
 
   const handleRestoreSampleData = () => {
-    setProducts(INITIAL_PRODUCTS);
-    setOrders(INITIAL_ORDERS);
-    setRestockOrders(INITIAL_RESTOCK_ORDERS);
-    setCustomers(INITIAL_CUSTOMERS);
-    showToast(
-      language === 'vi' ? 'Đã khôi phục dữ liệu mẫu ban đầu' : 'Demo data restored'
-    );
+    showToast('Dữ liệu mẫu đã bị vô hiệu hóa', 'SmartShop chỉ sử dụng dữ liệu thật');
   };
 
   // Sync dark mode class with HTML
@@ -636,195 +750,179 @@ export function App() {
     setCart([]);
   };
 
-  const handleCheckout = (paymentMethod: string, voucherCode: string, total: number) => {
+  const handleCheckout = async (paymentMethod: string, voucherCode: string, total: number) => {
     if (cart.length === 0) return;
 
-    // Deduct stock
-    setProducts((prev) =>
-      prev.map((prod) => {
-        const inCart = cart.find((item) => item.product.id === prod.id);
-        if (inCart) {
-          const newStock = Math.max(0, prod.stock - inCart.quantity);
-          return {
-            ...prod,
-            stock: newStock,
-            soldCount: (prod.soldCount || 0) + inCart.quantity,
-            status: newStock === 0 ? 'out_of_stock' : newStock <= 5 ? 'low_stock' : 'in_stock',
-          };
-        }
-        return prod;
-      })
-    );
-
-    // Create Order Record
-    const subtotal = cart.reduce((acc, item) => acc + item.product.price * item.quantity, 0);
-    const discount = Math.max(0, subtotal - total);
-    const now = new Date();
-    const orderCode = `HD-${Math.floor(1000 + Math.random() * 9000)}`;
-
-    const newOrder: Order = {
-      id: `ord-${Date.now()}`,
-      code: orderCode,
-      createdAt: now.toISOString().replace('T', ' ').substring(0, 16),
-      customer: selectedCustomer || undefined,
-      items: [...cart],
-      subtotal,
-      discount,
-      total,
-      paymentMethod:
-        paymentMethod === 'qr'
-          ? 'qr_code'
-          : paymentMethod === 'transfer'
-          ? 'bank_transfer'
-          : paymentMethod === 'card'
-          ? 'card'
-          : 'cash',
-      status: 'completed',
-      cashier: 'Nguyễn Tất Phi (Store Manager)',
-    };
-
-    setOrders((prev) => [newOrder, ...prev]);
-
-    // Push realtime activity
-    const activity: RealtimeActivity = {
-      id: `act-${Date.now()}`,
-      type: 'order',
-      title: `Thanh toán thành công #${orderCode}`,
-      description: `${selectedCustomer ? selectedCustomer.name : 'Khách lẻ'} • ${cart.length} món`,
-      timestamp: now.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
-      createdAtMs: Date.now(),
-      amount: total,
-      channel: 'Cửa hàng POS',
-      status: 'success',
-    };
-    setRealtimeActivities((prev) => [activity, ...prev.slice(0, 25)]);
-    setLatestActivity(activity);
-
-    // Update customer reward points & total spent
-    if (selectedCustomer) {
-      setCustomers((prev) =>
-        prev.map((c) =>
-          c.id === selectedCustomer.id
-            ? {
-                ...c,
-                totalSpent: c.totalSpent + total,
-                rewardPoints: c.rewardPoints + Math.round(total / 10000),
-              }
-            : c
-        )
-      );
+    const token = localStorage.getItem('smartsale_session_token');
+    if (!token) {
+      showToast('Phiên đăng nhập đã hết hạn', 'Vui lòng đăng nhập lại trước khi thanh toán');
+      return;
     }
 
-    setLastCheckoutOrder({
-      cart: [...cart],
-      customer: selectedCustomer,
-      paymentMethod,
-      total,
-    });
+    try {
+      const response = await fetch('/api/store/checkout', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          items: cart.map((item) => ({ productId: item.product.id, quantity: item.quantity })),
+          customerId: selectedCustomer?.id,
+          paymentMethod:
+            paymentMethod === 'qr'
+              ? 'qr_code'
+              : paymentMethod === 'transfer'
+              ? 'bank_transfer'
+              : paymentMethod === 'card'
+              ? 'card'
+              : 'cash',
+          voucherCode,
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok || !data.success) throw new Error(data.error || 'Không thể hoàn tất thanh toán.');
 
-    setCart([]);
-    soundManager.playCashRegisterChime();
-    showToast(`✅ Hoàn tất đơn hàng #${newOrder.code}`, `Doanh thu +${formatCurrency(total)}`);
+      setProducts(data.state.products);
+      setCustomers(data.state.customers);
+      setOrders(data.state.orders);
+      const newOrder: Order = data.order;
+      const now = new Date();
+
+      const activity: RealtimeActivity = {
+        id: `act-${Date.now()}`,
+        type: 'order',
+        title: `Thanh toán thành công #${newOrder.code}`,
+        description: `${selectedCustomer ? selectedCustomer.name : 'Khách lẻ'} • ${cart.length} món`,
+        timestamp: now.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+        createdAtMs: Date.now(),
+        amount: newOrder.total,
+        channel: 'Cửa hàng POS',
+        status: 'success',
+      };
+      setRealtimeActivities((prev) => [activity, ...prev.slice(0, 25)]);
+      setLatestActivity(activity);
+
+      setLastCheckoutOrder({
+        cart: [...cart],
+        customer: selectedCustomer,
+        paymentMethod,
+        total: newOrder.total,
+      });
+
+      setCart([]);
+      soundManager.playCashRegisterChime();
+      showToast(`✅ Hoàn tất đơn hàng #${newOrder.code}`, `Doanh thu +${formatCurrency(newOrder.total)}`);
+    } catch (error) {
+      showToast('Không thể hoàn tất thanh toán', error instanceof Error ? error.message : 'Vui lòng thử lại');
+    }
   };
 
   // Product Management Handlers
-  const handleSaveProduct = (productData: Partial<Product>) => {
-    if (editingProduct) {
-      setProducts((prev) =>
-        prev.map((p) =>
-          p.id === editingProduct.id
-            ? {
-                ...p,
-                ...productData,
-                status:
-                  (productData.stock ?? p.stock) === 0
-                    ? 'out_of_stock'
-                    : (productData.stock ?? p.stock) <= 5
-                    ? 'low_stock'
-                    : 'in_stock',
-              }
-            : p
-        )
-      );
-      showToast(`Đã cập nhật sản phẩm`, productData.name);
-    } else {
-      const newProd: Product = {
-        id: `prod-${Date.now()}`,
-        code: productData.code || `SP-${Math.floor(1000 + Math.random() * 9000)}`,
-        name: productData.name || 'Sản phẩm mới',
-        category: productData.category || 'Điện thoại',
-        price: productData.price || 0,
-        costPrice: productData.costPrice || Math.round((productData.price || 0) * 0.8),
-        stock: productData.stock || 0,
-        image:
-          productData.image ||
-          'https://images.unsplash.com/photo-1592750475338-74b7b21085ab?w=600&auto=format&fit=crop&q=80',
-        status: (productData.stock || 0) === 0 ? 'out_of_stock' : (productData.stock || 0) <= 5 ? 'low_stock' : 'in_stock',
-        soldCount: 0,
-        sku: productData.sku || `SKU-${Date.now()}`,
-      };
-      setProducts((prev) => [newProd, ...prev]);
-      showToast(`Đã thêm sản phẩm mới`, newProd.name);
+  const handleSaveProduct = async (productData: Partial<Product>) => {
+    const token = localStorage.getItem('smartsale_session_token');
+    if (!token) {
+      showToast('Phiên đăng nhập đã hết hạn', 'Vui lòng đăng nhập lại');
+      return;
     }
-    setIsAddProductModalOpen(false);
-    setEditingProduct(null);
+
+    try {
+      if (editingProduct) {
+        const res = await fetch(`/api/store/products/${editingProduct.id}`, {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify(productData),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) throw new Error(data.error || 'Không thể cập nhật sản phẩm.');
+        setProducts(data.state.products);
+        showToast('Đã cập nhật sản phẩm', productData.name || editingProduct.name);
+      } else {
+        const res = await fetch('/api/store/products', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify(productData),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) throw new Error(data.error || 'Không thể thêm sản phẩm.');
+        setProducts(data.state.products);
+        showToast('Đã thêm sản phẩm mới', data.product?.name || productData.name || 'Sản phẩm mới');
+      }
+    } catch (err: any) {
+      console.error('Save product failed:', err);
+      showToast('Lỗi lưu sản phẩm', err.message || 'Không thể lưu sản phẩm vào hệ thống.');
+    } finally {
+      setIsAddProductModalOpen(false);
+      setEditingProduct(null);
+    }
   };
 
-  const handleDeleteProduct = (productId: string) => {
-    setProducts((prev) => prev.filter((p) => p.id !== productId));
-    showToast('Đã xóa sản phẩm khỏi hệ thống');
+  const handleDeleteProduct = async (productId: string) => {
+    const token = localStorage.getItem('smartsale_session_token');
+    if (!token) {
+      showToast('Phiên đăng nhập đã hết hạn', 'Vui lòng đăng nhập lại trước khi xóa sản phẩm');
+      return;
+    }
+
+    try {
+      const res = await fetch(`/api/store/products/${productId}`, {
+        method: 'DELETE',
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || 'Không thể xóa sản phẩm khỏi máy chủ.');
+      }
+      setProducts(data.state.products);
+      showToast('Đã xóa sản phẩm thành công', 'Dữ liệu đã được cập nhật vĩnh viễn trong hệ thống');
+    } catch (err: any) {
+      console.error('Delete product failed:', err);
+      showToast('Không thể xóa sản phẩm', err.message || 'Vui lòng kiểm tra lại quyền hạn hoặc kết nối.');
+    }
   };
 
   // Restock Handlers
-  const handleConfirmRestock = (productId: string, amount: number) => {
-    const targetProd = products.find((p) => p.id === productId);
-    if (!targetProd) return;
+  const handleConfirmRestock = async (productId: string, amount: number) => {
+    const token = localStorage.getItem('smartsale_session_token');
+    if (!token) {
+      showToast('Phiên đăng nhập đã hết hạn', 'Vui lòng đăng nhập lại trước khi nhập kho');
+      return;
+    }
 
-    // Increase stock
-    setProducts((prev) =>
-      prev.map((p) => {
-        if (p.id === productId) {
-          const newStock = p.stock + amount;
-          return {
-            ...p,
-            stock: newStock,
-            status: newStock === 0 ? 'out_of_stock' : newStock <= 5 ? 'low_stock' : 'in_stock',
-          };
-        }
-        return p;
-      })
-    );
+    try {
+      const response = await fetch('/api/store/restock', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ productId, quantity: amount, branch: 'Chi nhánh Quận 1 - Hồ Chí Minh (Kho chính)' }),
+      });
+      const data = await response.json();
+      if (!response.ok || !data.success) throw new Error(data.error || 'Không thể nhập kho.');
 
-    // Create restock order record
-    const newRestockOrder: RestockOrder = {
-      id: `restock-${Date.now()}`,
-      code: `PNK-2026-${Math.floor(1000 + Math.random() * 9000)}`,
-      createdAt: new Date().toISOString().replace('T', ' ').substring(0, 16),
-      product: targetProd,
-      quantity: amount,
-      totalCost: amount * targetProd.costPrice,
-      branch: 'Chi nhánh Quận 1 - Hồ Chí Minh (Kho chính)',
-      status: 'completed',
-    };
-
-    setRestockOrders((prev) => [newRestockOrder, ...prev]);
-
-    // Push realtime activity
-    const now = new Date();
-    const act: RealtimeActivity = {
-      id: `act-restock-${Date.now()}`,
-      type: 'restock',
-      title: 'Nhập kho thành công',
-      description: `Đã nhập +${amount} chiếc ${targetProd.name} vào kho Quận 1`,
-      timestamp: now.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
-      createdAtMs: Date.now(),
-      channel: 'Cửa hàng POS',
-      status: 'success',
-    };
-    setRealtimeActivities((prev) => [act, ...prev.slice(0, 25)]);
-    setLatestActivity(act);
-
-    showToast(`✅ Đã nhập +${amount} sản phẩm`, `${targetProd.name}`);
+      const targetProd = data.state.products.find((product: Product) => product.id === productId);
+      setProducts(data.state.products);
+      setRestockOrders(data.state.restockOrders);
+      const now = new Date();
+      const act: RealtimeActivity = {
+        id: `act-restock-${Date.now()}`,
+        type: 'restock',
+        title: 'Nhập kho thành công',
+        description: `Đã nhập +${amount} chiếc ${targetProd?.name || productId} vào kho Quận 1`,
+        timestamp: now.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+        createdAtMs: Date.now(),
+        channel: 'Cửa hàng POS',
+        status: 'success',
+      };
+      setRealtimeActivities((prev) => [act, ...prev.slice(0, 25)]);
+      setLatestActivity(act);
+      showToast(`✅ Đã nhập +${amount} sản phẩm`, targetProd?.name || productId);
+    } catch (error) {
+      showToast('Không thể nhập kho', error instanceof Error ? error.message : 'Vui lòng thử lại');
+    }
   };
 
   // AI Chat Handlers
@@ -855,17 +953,21 @@ export function App() {
     try {
       const response = await fetch('/api/ai/chat', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${localStorage.getItem('smartsale_session_token') || ''}`,
+        },
         body: JSON.stringify({
           message: text,
           imageAttachment,
-          products,
-          customers,
           history: updatedMessages,
         }),
       });
 
       const data = await response.json();
+      if (!response.ok || !data.reply) {
+        throw new Error(data.error || 'Trợ lý AI không thể xử lý yêu cầu.');
+      }
       const aiReply: ChatMessage = {
         id: `msg-ai-${Date.now()}`,
         sender: 'ai',
@@ -947,6 +1049,10 @@ export function App() {
   }
 
   // Authentication check: If user is not logged in, render LoginScreen with Email & OTP verification
+  if (isAuthChecking) {
+    return <div className="min-h-screen bg-slate-50 dark:bg-slate-950" />;
+  }
+
   if (!currentUser) {
     return (
       <LoginScreen
@@ -1076,7 +1182,6 @@ export function App() {
             currentUser={currentUser}
             onLogout={handleLogout}
             dataMode={dataMode}
-            onToggleDataMode={(m) => handleSetDataMode(m)}
             originalAdminUser={originalAdminUser}
             onExitImpersonation={handleExitImpersonation}
             onSwitchRole={handleSwitchRoleToTest}
@@ -1177,7 +1282,6 @@ export function App() {
                 onOpenRealDataManager={() => setIsRealDataModalOpen(true)}
                 isDark={isDark}
                 dataMode={dataMode}
-                onToggleDataMode={(m) => handleSetDataMode(m)}
               />
             )}
 
@@ -1247,30 +1351,23 @@ export function App() {
               />
             )}
 
-            {currentTab === 'restock' && (
-              <RestockScreen
-                restockOrders={restockOrders}
-                products={products}
-                onOpenRestockModal={(prodId) => {
-                  setRestockProductId(prodId || null);
-                  setIsRestockModalOpen(true);
-                }}
-                onReceiveOrder={(ordId) => {
-                  setRestockOrders((prev) =>
-                    prev.map((o) => (o.id === ordId ? { ...o, status: 'completed' } : o))
-                  );
-                  showToast('Đã nhập hàng vào kho thành công!');
-                }}
-                isDark={isDark}
-              />
-            )}
-
             {currentTab === 'inventory' && (
-              <InventoryScreen
+              <InventoryBranchScreen
                 products={products}
+                restockOrders={restockOrders}
                 onOpenRestockModal={(prodId) => {
                   setRestockProductId(prodId || null);
                   setIsRestockModalOpen(true);
+                }}
+                onReceiveOrder={async (ordId) => {
+                  try {
+                    const data = await requestStoreMutation(`/api/store/restock/${ordId}/receive`, 'POST');
+                    setProducts(data.state.products);
+                    setRestockOrders(data.state.restockOrders);
+                    showToast('Đã nhận hàng vào kho thành công!');
+                  } catch (error) {
+                    showToast('Không thể nhận hàng', error instanceof Error ? error.message : 'Vui lòng thử lại');
+                  }
                 }}
                 isDark={isDark}
               />
@@ -1281,7 +1378,7 @@ export function App() {
             )}
 
             {currentTab === 'analytics-report' && (
-              <AnalyticsReportScreen products={products} isDark={isDark} />
+              <AnalyticsReportScreen products={products} orders={orders} isDark={isDark} />
             )}
 
             {currentTab === 'ai-assistant' && (
@@ -1299,8 +1396,10 @@ export function App() {
             {currentTab === 'ai-analyst' && (
               <AiAnalystScreen
                 products={products}
-                onOpenRestockModal={(prodId) => {
-                  setRestockProductId(prodId || null);
+                orders={orders}
+                token={localStorage.getItem('smartsale_session_token')}
+                onOpenRestockModal={(productId) => {
+                  setRestockProductId(productId || null);
                   setIsRestockModalOpen(true);
                 }}
                 isDark={isDark}
@@ -1318,6 +1417,8 @@ export function App() {
                 rolePermissions={rolePermissions}
                 onUpdateRolePermissions={handleUpdateRolePermissions}
                 onResetRolePermissions={handleResetRolePermissions}
+                permissionAuditHistory={permissionAuditHistory}
+                staffAuditHistory={staffAuditHistory}
                 isDark={isDark}
               />
             )}
@@ -1521,7 +1622,6 @@ export function App() {
         products={products}
         orders={orders}
         dataMode={dataMode}
-        onSetDataMode={handleSetDataMode}
         onNavigateToPos={() => {
           setIsRealDataModalOpen(false);
           setCurrentTab('pos');
@@ -1535,15 +1635,6 @@ export function App() {
           setIsAddProductModalOpen(true);
         }}
         isAutoStreamActive={isAutoStreamActive}
-        onToggleAutoStream={() => {
-          setIsAutoStreamActive((prev) => {
-            const next = !prev;
-            if (next && dataMode === 'real') {
-              setDataMode('demo');
-            }
-            return next;
-          });
-        }}
         isDark={isDark}
       />
     </div>

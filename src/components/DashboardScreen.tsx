@@ -70,14 +70,14 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
   const totalInventoryValue = products.reduce((acc, p) => acc + p.stock * p.costPrice, 0);
 
   // Chart data for 7 days
-  const baseChartRevenue = todayRevenue > 0 ? todayRevenue : 14500000;
+  const baseChartRevenue = todayRevenue;
   const chartData = [
-    { day: language === 'vi' ? 'T2' : 'Mon', value: 8500000, x: 20, y: 160 },
-    { day: language === 'vi' ? 'T3' : 'Tue', value: 12500000, x: 80, y: 140 },
-    { day: language === 'vi' ? 'T4' : 'Wed', value: 10200000, x: 140, y: 150 },
-    { day: language === 'vi' ? 'T5' : 'Thu', value: 16800000, x: 200, y: 110 },
-    { day: language === 'vi' ? 'T6' : 'Fri', value: 9200000, x: 260, y: 165 },
-    { day: language === 'vi' ? 'T7' : 'Sat', value: 28500000, x: 320, y: 50 },
+    { day: language === 'vi' ? 'T2' : 'Mon', value: 0, x: 20, y: 170 },
+    { day: language === 'vi' ? 'T3' : 'Tue', value: 0, x: 80, y: 170 },
+    { day: language === 'vi' ? 'T4' : 'Wed', value: 0, x: 140, y: 170 },
+    { day: language === 'vi' ? 'T5' : 'Thu', value: 0, x: 200, y: 170 },
+    { day: language === 'vi' ? 'T6' : 'Fri', value: 0, x: 260, y: 170 },
+    { day: language === 'vi' ? 'T7' : 'Sat', value: 0, x: 320, y: 170 },
     { day: language === 'vi' ? 'Hôm nay' : 'Today', value: baseChartRevenue, x: 380, y: Math.max(15, 170 - Math.min(150, (baseChartRevenue / 40000000) * 150)) },
   ];
 

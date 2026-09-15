@@ -5,7 +5,6 @@ import {
   Package,
   Users,
   Receipt,
-  Truck,
   ClipboardList,
   TrendingUp,
   BarChart3,
@@ -111,14 +110,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
           icon: <Receipt className="w-4 h-4" />,
         },
         {
-          id: 'restock',
-          label: t.navRestock,
-          emojiIcon: '🚚',
-          icon: <Truck className="w-4 h-4" />,
-        },
-        {
           id: 'inventory',
-          label: t.navInventory,
+          label: language === 'vi' ? 'Tồn kho & Chi nhánh' : 'Inventory & Branches',
           emojiIcon: '📋',
           icon: <ClipboardList className="w-4 h-4" />,
         },

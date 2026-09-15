@@ -84,7 +84,7 @@ export const BottomNav: React.FC<BottomNavProps> = ({
       <button
         onClick={onOpenMobileMenu}
         className={`flex flex-col items-center justify-center flex-1 py-1 px-1 rounded-xl transition-all ${
-          ['customers', 'invoices', 'restock', 'inventory', 'revenue-report', 'analytics-report', 'ai-analyst', 'users-permissions'].includes(currentTab)
+          ['customers', 'invoices', 'inventory', 'revenue-report', 'analytics-report', 'ai-analyst', 'users-permissions'].includes(currentTab)
             ? 'text-blue-600 dark:text-blue-400 font-bold'
             : 'hover:text-slate-800 dark:hover:text-slate-200'
         }`}

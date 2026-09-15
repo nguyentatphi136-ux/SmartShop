@@ -14,6 +14,7 @@ import {
   Filter,
   CheckCircle2,
   AlertCircle,
+  AlertTriangle,
   XCircle,
   PackagePlus,
 } from 'lucide-react';
@@ -46,6 +47,7 @@ export const ProductsScreen: React.FC<ProductsScreenProps> = ({
   const [selectedCategory, setSelectedCategory] = useState('all');
   const [selectedStatus, setSelectedStatus] = useState('all');
   const [currentPage, setCurrentPage] = useState(1);
+  const [deletingProduct, setDeletingProduct] = useState<Product | null>(null);
   const itemsPerPage = 8;
 
   // Extract dynamic categories from real products
@@ -405,12 +407,9 @@ export const ProductsScreen: React.FC<ProductsScreenProps> = ({
                               <Edit2 className="w-3.5 h-3.5" />
                             </button>
                             <button
-                              onClick={() => {
-                                if (confirm(language === 'vi' ? `Bạn có chắc chắn muốn xóa sản phẩm "${product.name}"?` : `Are you sure you want to delete "${product.name}"?`)) {
-                                  onDeleteProduct(product.id);
-                                }
-                              }}
-                              className="p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-500 hover:text-red-600 transition-colors"
+                              id={`btn-delete-product-${product.id}`}
+                              onClick={() => setDeletingProduct(product)}
+                              className="p-1.5 rounded-lg hover:bg-red-50 dark:hover:bg-red-950/60 text-slate-500 hover:text-red-600 transition-colors"
                               title={t.delete}
                             >
                               <Trash2 className="w-3.5 h-3.5" />
@@ -486,6 +485,74 @@ export const ProductsScreen: React.FC<ProductsScreenProps> = ({
           </div>
         </div>
       </div>
+
+      {/* Delete Confirmation Modal */}
+      {deletingProduct && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-in fade-in">
+          <div
+            className={`w-full max-w-md rounded-2xl border p-6 shadow-2xl relative ${
+              isDark ? 'bg-slate-900 border-slate-800 text-white' : 'bg-white border-slate-200 text-slate-900'
+            }`}
+          >
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-10 h-10 rounded-xl bg-red-100 dark:bg-red-950/60 flex items-center justify-center text-red-600 dark:text-red-400">
+                <AlertTriangle className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-slate-900 dark:text-white">
+                  {language === 'vi' ? 'Xác nhận xóa sản phẩm' : 'Confirm Product Deletion'}
+                </h3>
+                <p className="text-xs text-slate-500 dark:text-slate-400">
+                  {language === 'vi' ? 'Hành động này sẽ xóa sản phẩm khỏi kho hàng vĩnh viễn' : 'This will remove the product permanently'}
+                </p>
+              </div>
+            </div>
+
+            <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/60 mb-5 text-xs space-y-2">
+              <div className="flex justify-between items-center">
+                <span className="text-slate-500 dark:text-slate-400">Tên sản phẩm:</span>
+                <span className="font-semibold text-slate-900 dark:text-white text-right max-w-[220px] truncate">{deletingProduct.name}</span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-slate-500 dark:text-slate-400">Mã SKU / Code:</span>
+                <span className="font-mono font-medium text-slate-700 dark:text-slate-300">{deletingProduct.sku || deletingProduct.code}</span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-slate-500 dark:text-slate-400">Giá bán:</span>
+                <span className="font-bold text-blue-600 dark:text-blue-400">{formatCurr(deletingProduct.price)}</span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-slate-500 dark:text-slate-400">Số lượng tồn kho:</span>
+                <span className="font-semibold text-slate-900 dark:text-white">{deletingProduct.stock} cái</span>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2.5">
+              <button
+                type="button"
+                id="btn-cancel-delete-product"
+                onClick={() => setDeletingProduct(null)}
+                className="px-4 py-2 text-xs font-medium rounded-xl border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+              >
+                {language === 'vi' ? 'Hủy bỏ' : 'Cancel'}
+              </button>
+              <button
+                type="button"
+                id="btn-confirm-delete-product"
+                onClick={() => {
+                  const id = deletingProduct.id;
+                  setDeletingProduct(null);
+                  onDeleteProduct(id);
+                }}
+                className="px-4 py-2 text-xs font-semibold rounded-xl bg-red-600 hover:bg-red-700 text-white shadow-md shadow-red-600/20 transition-colors flex items-center gap-1.5"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>{language === 'vi' ? 'Xóa vĩnh viễn' : 'Delete Permanently'}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

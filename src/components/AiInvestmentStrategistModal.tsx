@@ -35,15 +35,8 @@ export const AiInvestmentStrategistModal: React.FC<AiInvestmentStrategistModalPr
     {
       id: 'msg-welcome',
       role: 'ai',
-      text: `### ⚡ Helios AI Wealth Strategist
-Welcome back, **${user.name}**! I have synchronized your current **$${user.totalHolding.toLocaleString()}** portfolio.
-
-**Real-time Intelligence Summary:**
-- **Tech Concentration**: 68.4% allocation across AAPL, AMZN, MSFT, NVDA.
-- **Top Breakout**: **SPOT** is surging **+16.31%** on audio monetization.
-- **Risk Score**: **Low-Moderate (Beta: 1.14)**.
-
-How can I assist your investment strategy today?`,
+      text: `### SmartShop AI
+Xin chào **${user.name}**. Tôi chỉ phân tích dữ liệu bán hàng và tồn kho SmartShop trong phiên này. Hãy hỏi về sản phẩm, tồn kho hoặc doanh thu.`,
       timestamp: 'Just now',
       insightType: 'strategy',
     },
@@ -86,9 +79,12 @@ How can I assist your investment strategy today?`,
     setIsLoading(true);
 
     try {
-      const response = await fetch('/api/chat', {
+      const response = await fetch('/api/ai/chat', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${localStorage.getItem('smartsale_session_token') || ''}`,
+        },
         body: JSON.stringify({
           message: text,
           history: messages.slice(-4).map((m) => ({
@@ -99,6 +95,7 @@ How can I assist your investment strategy today?`,
       });
 
       const data = await response.json();
+      if (!response.ok || !data.reply) throw new Error(data.error || 'AI không thể xử lý yêu cầu.');
       const aiReply: AiInsightMessage = {
         id: `ai-${Date.now()}`,
         role: 'ai',
@@ -113,8 +110,7 @@ How can I assist your investment strategy today?`,
         {
           id: `ai-err-${Date.now()}`,
           role: 'ai',
-          text: `### 📈 Helios Intelligence Engine
-Your portfolio metrics show solid momentum (+3.11% in current cycle). With **$12,304.11** active equity, maintaining trailing stop-losses on NVDA ($1,980) and rotating dividend yields from AAPL into defensive cash-flow generators is recommended.`,
+          text: 'Không thể kết nối Trợ lý SmartShop AI. Vui lòng kiểm tra phiên đăng nhập và thử lại.',
           timestamp: 'Just now',
         },
       ]);

@@ -56,7 +56,7 @@ export const PERMISSION_MODULES: PermissionModuleDef[] = [
     nameVi: 'Tạo & Duyệt Đơn Nhập kho',
     nameEn: 'Create & Approve Restock Orders',
     descriptionVi: 'Tạo đơn nhập hàng nhà cung cấp, duyệt xác nhận hàng về kho',
-    tabMapping: 'restock',
+    tabMapping: 'inventory',
     category: 'operations',
   },
   {
@@ -263,6 +263,10 @@ export function canUserAccessTab(
     settings: 'settings_manage',
     support: '',
   };
+
+  if (tab === 'inventory') {
+    return canUserAccessModule(user, 'inventory_check', customMatrix) || canUserAccessModule(user, 'restock_manage', customMatrix);
+  }
 
   const moduleKey = mapping[tab];
   if (!moduleKey) return true;

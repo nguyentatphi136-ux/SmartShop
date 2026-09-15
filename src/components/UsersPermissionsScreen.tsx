@@ -23,7 +23,7 @@ import {
   Shield,
   HelpCircle,
 } from 'lucide-react';
-import { StaffUser } from '../types';
+import { PermissionAuditEntry, StaffAuditEntry, StaffUser } from '../types';
 import { useLanguage } from '../utils/i18n';
 import {
   PERMISSION_MODULES,
@@ -42,6 +42,8 @@ interface UsersPermissionsScreenProps {
   rolePermissions: RolePermissionsMatrix;
   onUpdateRolePermissions?: (matrix: RolePermissionsMatrix) => void;
   onResetRolePermissions?: () => void;
+  permissionAuditHistory?: PermissionAuditEntry[];
+  staffAuditHistory?: StaffAuditEntry[];
   isDark?: boolean;
 }
 
@@ -55,6 +57,8 @@ export const UsersPermissionsScreen: React.FC<UsersPermissionsScreenProps> = ({
   rolePermissions,
   onUpdateRolePermissions,
   onResetRolePermissions,
+  permissionAuditHistory = [],
+  staffAuditHistory = [],
   isDark,
 }) => {
   const { language, t } = useLanguage();
@@ -591,6 +595,59 @@ export const UsersPermissionsScreen: React.FC<UsersPermissionsScreenProps> = ({
             </tbody>
           </table>
         </div>
+      </div>
+
+      <div className={`p-5 rounded-2xl border ${isDark ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200 shadow-xs'}`}>
+        <div className="flex items-center gap-2 mb-3">
+          <ShieldCheck className="w-5 h-5 text-blue-600" />
+          <div>
+            <h3 className="font-bold text-sm text-slate-900 dark:text-white">
+              {language === 'vi' ? 'Lịch sử thay đổi phân quyền' : 'Permission change history'}
+            </h3>
+            <p className="text-xs text-slate-500 dark:text-slate-400">
+              {language === 'vi' ? 'Nhật ký được lưu trên server và không phụ thuộc localStorage.' : 'Server-persisted audit history.'}
+            </p>
+          </div>
+        </div>
+        {permissionAuditHistory.length === 0 ? (
+          <p className="text-xs text-slate-400">{language === 'vi' ? 'Chưa có thay đổi nào.' : 'No changes recorded.'}</p>
+        ) : (
+          <div className="space-y-2 max-h-56 overflow-y-auto">
+            {permissionAuditHistory.slice(0, 20).map((entry) => (
+              <div key={entry.id} className="flex flex-col sm:flex-row sm:items-center justify-between gap-1 p-2.5 rounded-lg bg-slate-50 dark:bg-slate-800/60 text-xs">
+                <span className="text-slate-700 dark:text-slate-200">
+                  <strong>{entry.actorName}</strong>{' '}
+                  {entry.action === 'reset' ? (language === 'vi' ? 'khôi phục quyền mặc định' : 'reset permissions') : (language === 'vi' ? `đã đổi ${entry.changedRoles.join(', ')}` : `updated ${entry.changedRoles.join(', ')}`)}
+                </span>
+                <span className="text-slate-400 whitespace-nowrap">{new Date(entry.createdAt).toLocaleString(language === 'vi' ? 'vi-VN' : 'en-US')}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div className={`p-5 rounded-2xl border ${isDark ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200 shadow-xs'}`}>
+        <div className="flex items-center gap-2 mb-3">
+          <Users className="w-5 h-5 text-blue-600" />
+          <div>
+            <h3 className="font-bold text-sm text-slate-900 dark:text-white">
+              {language === 'vi' ? 'Lịch sử thao tác nhân viên' : 'Staff operation history'}
+            </h3>
+            <p className="text-xs text-slate-500 dark:text-slate-400">{language === 'vi' ? 'Bao gồm tạo, sửa, khóa, xóa và thử vai trò.' : 'Create, update, lock, delete, and role testing actions.'}</p>
+          </div>
+        </div>
+        {staffAuditHistory.length === 0 ? (
+          <p className="text-xs text-slate-400">{language === 'vi' ? 'Chưa có thao tác nào.' : 'No staff operations recorded.'}</p>
+        ) : (
+          <div className="space-y-2 max-h-64 overflow-y-auto">
+            {staffAuditHistory.slice(0, 30).map((entry) => (
+              <div key={entry.id} className="flex flex-col sm:flex-row sm:items-center justify-between gap-1 p-2.5 rounded-lg bg-slate-50 dark:bg-slate-800/60 text-xs">
+                <span className="text-slate-700 dark:text-slate-200"><strong>{entry.actorName}</strong> {entry.details || entry.action}{entry.targetName ? `: ${entry.targetName}` : ''}</span>
+                <span className="text-slate-400 whitespace-nowrap">{new Date(entry.createdAt).toLocaleString(language === 'vi' ? 'vi-VN' : 'en-US')}</span>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Modal: Thêm nhân viên mới */}

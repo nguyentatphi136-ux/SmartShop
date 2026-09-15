@@ -1477,22 +1477,6 @@ Mặt nạ dưỡng ẩm cấp nước (Hộp 5 miếng), 120000, 65000, 50, Ch�
               </button>
             </div>
 
-            {/* Action D: Restore Demo Data */}
-            <div className="pt-2 text-center">
-              <button
-                onClick={() => {
-                  if (window.confirm(language === 'vi' ? 'Khôi phục lại dữ liệu mẫu đầy đủ ban đầu?' : 'Restore default sample dataset?')) {
-                    if (onSetDataMode) onSetDataMode('demo');
-                    onRestoreSampleData();
-                    onClose();
-                  }
-                }}
-                className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 text-[11px] underline flex items-center justify-center gap-1 mx-auto"
-              >
-                <RefreshCw className="w-3 h-3" />
-                <span>{language === 'vi' ? 'Khôi phục lại dữ liệu mẫu demo ban đầu' : 'Restore initial demo sample dataset'}</span>
-              </button>
-            </div>
           </div>
         )}
 
