@@ -185,7 +185,7 @@ export function App() {
   useEffect(() => {
     try {
       localStorage.setItem('smartsale_staff_list_v2', JSON.stringify(staffList));
-    } catch (e) {}
+    } catch (e) { }
   }, [staffList]);
 
   // Role-Based Access Control (RBAC) Permissions Matrix
@@ -358,7 +358,7 @@ export function App() {
         setCurrentUser(updatedStaff);
         try {
           localStorage.setItem('smartsale_auth_user', JSON.stringify(updatedStaff));
-        } catch (e) {}
+        } catch (e) { }
       }
       showToast(`Đã cập nhật nhân sự: ${updatedStaff.name}`);
     } catch (error) {
@@ -433,12 +433,12 @@ export function App() {
       fetch('/api/auth/logout', {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}` },
-      }).catch(() => {});
+      }).catch(() => { });
     }
     try {
       localStorage.removeItem('smartsale_auth_user');
       localStorage.removeItem('smartsale_session_token');
-    } catch (e) {}
+    } catch (e) { }
     setCurrentUser(null);
     setOriginalAdminUser(null);
     showToast('Đã đăng xuất tài khoản thành công', 'Vui lòng đăng nhập lại khi cần sử dụng');
@@ -457,31 +457,31 @@ export function App() {
   useEffect(() => {
     try {
       localStorage.setItem('smartsale_products_v2', JSON.stringify(products));
-    } catch (e) {}
+    } catch (e) { }
   }, [products]);
 
   useEffect(() => {
     try {
       localStorage.setItem('smartsale_customers_v2', JSON.stringify(customers));
-    } catch (e) {}
+    } catch (e) { }
   }, [customers]);
 
   useEffect(() => {
     try {
       localStorage.setItem('smartsale_orders_v2', JSON.stringify(orders));
-    } catch (e) {}
+    } catch (e) { }
   }, [orders]);
 
   useEffect(() => {
     try {
       localStorage.setItem('smartsale_restock_v2', JSON.stringify(restockOrders));
-    } catch (e) {}
+    } catch (e) { }
   }, [restockOrders]);
 
   useEffect(() => {
     try {
       localStorage.setItem('smartsale_dark_mode', String(isDark));
-    } catch (e) {}
+    } catch (e) { }
   }, [isDark]);
 
   // Real-time Engine State
@@ -770,10 +770,10 @@ export function App() {
             paymentMethod === 'qr'
               ? 'qr_code'
               : paymentMethod === 'transfer'
-              ? 'bank_transfer'
-              : paymentMethod === 'card'
-              ? 'card'
-              : 'cash',
+                ? 'bank_transfer'
+                : paymentMethod === 'card'
+                  ? 'card'
+                  : 'cash',
           voucherCode,
         }),
       });
@@ -942,10 +942,10 @@ export function App() {
       prev.map((s) =>
         s.id === activeSession.id
           ? {
-              ...s,
-              title: s.messages.length === 0 ? text.substring(0, 30) + '...' : s.title,
-              messages: updatedMessages,
-            }
+            ...s,
+            title: s.messages.length === 0 ? text.substring(0, 30) + '...' : s.title,
+            messages: updatedMessages,
+          }
           : s
       )
     );
@@ -1073,9 +1073,8 @@ export function App() {
   return (
     <div
       id="smartsale-app-root"
-      className={`min-h-screen font-sans antialiased transition-colors duration-200 ${
-        isDark ? 'bg-slate-950 text-slate-100' : 'bg-slate-50 text-slate-900'
-      }`}
+      className={`min-h-screen font-sans antialiased transition-colors duration-200 ${isDark ? 'bg-slate-950 text-slate-100' : 'bg-slate-50 text-slate-900'
+        }`}
     >
       {/* Real-time Floating Toast Notification */}
       {toastMessage && (
@@ -1197,9 +1196,8 @@ export function App() {
 
                 <div>
                   <span
-                    className={`inline-block px-3 py-1 rounded-full text-xs font-bold border mb-2 ${
-                      getRoleDetails(currentUser?.role || 'admin', language).badgeColor
-                    }`}
+                    className={`inline-block px-3 py-1 rounded-full text-xs font-bold border mb-2 ${getRoleDetails(currentUser?.role || 'admin', language).badgeColor
+                      }`}
                   >
                     {getRoleDetails(currentUser?.role || 'admin', language).label}
                   </span>
@@ -1241,11 +1239,10 @@ export function App() {
                   )}
                   <button
                     onClick={() => setCurrentTab('dashboard')}
-                    className={`px-4 py-2.5 rounded-xl text-xs font-semibold border transition-all cursor-pointer ${
-                      isDark
-                        ? 'bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700'
-                        : 'bg-slate-100 border-slate-200 text-slate-700 hover:bg-slate-200'
-                    }`}
+                    className={`px-4 py-2.5 rounded-xl text-xs font-semibold border transition-all cursor-pointer ${isDark
+                      ? 'bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700'
+                      : 'bg-slate-100 border-slate-200 text-slate-700 hover:bg-slate-200'
+                      }`}
                   >
                     Về Bảng điều khiển (Dashboard)
                   </button>
@@ -1262,272 +1259,272 @@ export function App() {
               </div>
             ) : (
               <>
-            {currentTab === 'dashboard' && (
-              <DashboardScreen
-                products={products}
-                orders={orders}
-                realtimeActivities={realtimeActivities}
-                isAutoStreamActive={isAutoStreamActive}
-                onToggleAutoStream={() => setIsAutoStreamActive(!isAutoStreamActive)}
-                streamIntervalSeconds={streamIntervalSeconds}
-                onChangeInterval={setStreamIntervalSeconds}
-                onTriggerInstantOrder={generateSimulatedRealtimeOrder}
-                latestActivity={latestActivity}
-                onTabChange={setCurrentTab}
-                onOpenRestockModal={(prodId) => {
-                  setRestockProductId(prodId || null);
-                  setIsRestockModalOpen(true);
-                }}
-                onOpenReportModal={() => setIsReportModalOpen(true)}
-                onOpenRealDataManager={() => setIsRealDataModalOpen(true)}
-                isDark={isDark}
-                dataMode={dataMode}
-              />
-            )}
+                {currentTab === 'dashboard' && (
+                  <DashboardScreen
+                    products={products}
+                    orders={orders}
+                    realtimeActivities={realtimeActivities}
+                    isAutoStreamActive={isAutoStreamActive}
+                    onToggleAutoStream={() => setIsAutoStreamActive(!isAutoStreamActive)}
+                    streamIntervalSeconds={streamIntervalSeconds}
+                    onChangeInterval={setStreamIntervalSeconds}
+                    onTriggerInstantOrder={generateSimulatedRealtimeOrder}
+                    latestActivity={latestActivity}
+                    onTabChange={setCurrentTab}
+                    onOpenRestockModal={(prodId) => {
+                      setRestockProductId(prodId || null);
+                      setIsRestockModalOpen(true);
+                    }}
+                    onOpenReportModal={() => setIsReportModalOpen(true)}
+                    onOpenRealDataManager={() => setIsRealDataModalOpen(true)}
+                    isDark={isDark}
+                    dataMode={dataMode}
+                  />
+                )}
 
-            {currentTab === 'pos' && (
-              <PosScreen
-                products={products}
-                cart={cart}
-                onAddToCart={handleAddToCart}
-                onUpdateQuantity={handleUpdateQuantity}
-                onRemoveFromCart={handleRemoveFromCart}
-                onClearCart={handleClearCart}
-                selectedCustomer={selectedCustomer}
-                onSelectCustomerClick={() => setIsCustomerSelectModalOpen(true)}
-                onCheckout={handleCheckout}
-                searchQuery={globalSearchQuery}
-                onSearchChange={setGlobalSearchQuery}
-                isDark={isDark}
-              />
-            )}
+                {currentTab === 'pos' && (
+                  <PosScreen
+                    products={products}
+                    cart={cart}
+                    onAddToCart={handleAddToCart}
+                    onUpdateQuantity={handleUpdateQuantity}
+                    onRemoveFromCart={handleRemoveFromCart}
+                    onClearCart={handleClearCart}
+                    selectedCustomer={selectedCustomer}
+                    onSelectCustomerClick={() => setIsCustomerSelectModalOpen(true)}
+                    onCheckout={handleCheckout}
+                    searchQuery={globalSearchQuery}
+                    onSearchChange={setGlobalSearchQuery}
+                    isDark={isDark}
+                  />
+                )}
 
-            {currentTab === 'products' && (
-              <ProductsScreen
-                products={products}
-                onAddProductClick={() => {
-                  setEditingProduct(null);
-                  setIsAddProductModalOpen(true);
-                }}
-                onEditProductClick={(prod) => {
-                  setEditingProduct(prod);
-                  setIsAddProductModalOpen(true);
-                }}
-                onDeleteProduct={handleDeleteProduct}
-                onOpenRestockModal={(prodId) => {
-                  setRestockProductId(prodId || null);
-                  setIsRestockModalOpen(true);
-                }}
-                onOpenRealDataManager={() => setIsRealDataModalOpen(true)}
-                isDark={isDark}
-                canManageProducts={canUserAccessModule(currentUser, 'products_manage', rolePermissions)}
-              />
-            )}
+                {currentTab === 'products' && (
+                  <ProductsScreen
+                    products={products}
+                    onAddProductClick={() => {
+                      setEditingProduct(null);
+                      setIsAddProductModalOpen(true);
+                    }}
+                    onEditProductClick={(prod) => {
+                      setEditingProduct(prod);
+                      setIsAddProductModalOpen(true);
+                    }}
+                    onDeleteProduct={handleDeleteProduct}
+                    onOpenRestockModal={(prodId) => {
+                      setRestockProductId(prodId || null);
+                      setIsRestockModalOpen(true);
+                    }}
+                    onOpenRealDataManager={() => setIsRealDataModalOpen(true)}
+                    isDark={isDark}
+                    canManageProducts={canUserAccessModule(currentUser, 'products_manage', rolePermissions)}
+                  />
+                )}
 
-            {currentTab === 'customers' && (
-              <CustomersScreen
-                customers={customers}
-                onSelectCustomer={(cust) => {
-                  setSelectedCustomer(cust);
-                  showToast(`Đã chọn khách hàng`, `${cust.name} (${cust.tier})`);
-                }}
-                onAddCustomer={() => setIsCustomerSelectModalOpen(true)}
-                isDark={isDark}
-              />
-            )}
+                {currentTab === 'customers' && (
+                  <CustomersScreen
+                    customers={customers}
+                    onSelectCustomer={(cust) => {
+                      setSelectedCustomer(cust);
+                      showToast(`Đã chọn khách hàng`, `${cust.name} (${cust.tier})`);
+                    }}
+                    onAddCustomer={() => setIsCustomerSelectModalOpen(true)}
+                    isDark={isDark}
+                  />
+                )}
 
-            {currentTab === 'invoices' && (
-              <InvoicesScreen
-                orders={orders}
-                onReprintReceipt={(order) => {
-                  setLastCheckoutOrder({
-                    cart: order.items,
-                    customer: order.customer || null,
-                    paymentMethod: order.paymentMethod,
-                    total: order.total,
-                  });
-                }}
-                isDark={isDark}
-              />
-            )}
+                {currentTab === 'invoices' && (
+                  <InvoicesScreen
+                    orders={orders}
+                    onReprintReceipt={(order) => {
+                      setLastCheckoutOrder({
+                        cart: order.items,
+                        customer: order.customer || null,
+                        paymentMethod: order.paymentMethod,
+                        total: order.total,
+                      });
+                    }}
+                    isDark={isDark}
+                  />
+                )}
 
-            {currentTab === 'inventory' && (
-              <InventoryBranchScreen
-                products={products}
-                restockOrders={restockOrders}
-                onOpenRestockModal={(prodId) => {
-                  setRestockProductId(prodId || null);
-                  setIsRestockModalOpen(true);
-                }}
-                onReceiveOrder={async (ordId) => {
-                  try {
-                    const data = await requestStoreMutation(`/api/store/restock/${ordId}/receive`, 'POST');
-                    setProducts(data.state.products);
-                    setRestockOrders(data.state.restockOrders);
-                    showToast('Đã nhận hàng vào kho thành công!');
-                  } catch (error) {
-                    showToast('Không thể nhận hàng', error instanceof Error ? error.message : 'Vui lòng thử lại');
-                  }
-                }}
-                isDark={isDark}
-              />
-            )}
+                {currentTab === 'inventory' && (
+                  <InventoryBranchScreen
+                    products={products}
+                    restockOrders={restockOrders}
+                    onOpenRestockModal={(prodId) => {
+                      setRestockProductId(prodId || null);
+                      setIsRestockModalOpen(true);
+                    }}
+                    onReceiveOrder={async (ordId) => {
+                      try {
+                        const data = await requestStoreMutation(`/api/store/restock/${ordId}/receive`, 'POST');
+                        setProducts(data.state.products);
+                        setRestockOrders(data.state.restockOrders);
+                        showToast('Đã nhận hàng vào kho thành công!');
+                      } catch (error) {
+                        showToast('Không thể nhận hàng', error instanceof Error ? error.message : 'Vui lòng thử lại');
+                      }
+                    }}
+                    isDark={isDark}
+                  />
+                )}
 
-            {currentTab === 'revenue-report' && (
-              <RevenueReportScreen products={products} orders={orders} isDark={isDark} />
-            )}
+                {currentTab === 'revenue-report' && (
+                  <RevenueReportScreen products={products} orders={orders} isDark={isDark} />
+                )}
 
-            {currentTab === 'analytics-report' && (
-              <AnalyticsReportScreen products={products} orders={orders} isDark={isDark} />
-            )}
+                {currentTab === 'analytics-report' && (
+                  <AnalyticsReportScreen products={products} orders={orders} isDark={isDark} />
+                )}
 
-            {currentTab === 'ai-assistant' && (
-              <AiAssistantScreen
-                sessions={chatSessions}
-                activeSessionId={activeSessionId}
-                onSelectSession={setActiveSessionId}
-                onNewSession={handleNewSession}
-                onSendMessage={handleSendMessage}
-                onAddToCartFromAI={handleAddToCartFromAI}
-                isDark={isDark}
-              />
-            )}
+                {currentTab === 'ai-assistant' && (
+                  <AiAssistantScreen
+                    sessions={chatSessions}
+                    activeSessionId={activeSessionId}
+                    onSelectSession={setActiveSessionId}
+                    onNewSession={handleNewSession}
+                    onSendMessage={handleSendMessage}
+                    onAddToCartFromAI={handleAddToCartFromAI}
+                    isDark={isDark}
+                  />
+                )}
 
-            {currentTab === 'ai-analyst' && (
-              <AiAnalystScreen
-                products={products}
-                orders={orders}
-                token={localStorage.getItem('smartsale_session_token')}
-                onOpenRestockModal={(productId) => {
-                  setRestockProductId(productId || null);
-                  setIsRestockModalOpen(true);
-                }}
-                isDark={isDark}
-              />
-            )}
+                {currentTab === 'ai-analyst' && (
+                  <AiAnalystScreen
+                    products={products}
+                    orders={orders}
+                    token={localStorage.getItem('smartsale_session_token')}
+                    onOpenRestockModal={(productId) => {
+                      setRestockProductId(productId || null);
+                      setIsRestockModalOpen(true);
+                    }}
+                    isDark={isDark}
+                  />
+                )}
 
-            {currentTab === 'users-permissions' && (
-              <UsersPermissionsScreen
-                staffList={staffList}
-                onAddStaff={handleAddStaff}
-                onUpdateStaff={handleUpdateStaff}
-                onDeleteStaff={handleDeleteStaff}
-                onImpersonateStaff={handleImpersonateStaff}
-                currentUser={currentUser}
-                rolePermissions={rolePermissions}
-                onUpdateRolePermissions={handleUpdateRolePermissions}
-                onResetRolePermissions={handleResetRolePermissions}
-                permissionAuditHistory={permissionAuditHistory}
-                staffAuditHistory={staffAuditHistory}
-                isDark={isDark}
-              />
-            )}
+                {currentTab === 'users-permissions' && (
+                  <UsersPermissionsScreen
+                    staffList={staffList}
+                    onAddStaff={handleAddStaff}
+                    onUpdateStaff={handleUpdateStaff}
+                    onDeleteStaff={handleDeleteStaff}
+                    onImpersonateStaff={handleImpersonateStaff}
+                    currentUser={currentUser}
+                    rolePermissions={rolePermissions}
+                    onUpdateRolePermissions={handleUpdateRolePermissions}
+                    onResetRolePermissions={handleResetRolePermissions}
+                    permissionAuditHistory={permissionAuditHistory}
+                    staffAuditHistory={staffAuditHistory}
+                    isDark={isDark}
+                  />
+                )}
 
-            {currentTab === 'settings' && (
-              <div className="max-w-3xl mx-auto space-y-6">
-                <h1 className="text-2xl font-bold text-slate-900 dark:text-white">{t.navSettings}</h1>
+                {currentTab === 'settings' && (
+                  <div className="max-w-3xl mx-auto space-y-6">
+                    <h1 className="text-2xl font-bold text-slate-900 dark:text-white">{t.navSettings}</h1>
 
-                {/* Real Data Management Card */}
-                <div className={`p-6 rounded-2xl border ${isDark ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'} space-y-4`}>
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <h3 className="font-semibold text-base text-slate-900 dark:text-white flex items-center gap-2">
-                        <span>{language === 'vi' ? 'Quản lý Dữ liệu Thực tế Cửa hàng' : 'Store Real Data Management'}</span>
-                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300">
-                          {language === 'vi' ? '1 Chi nhánh duy nhất' : 'Single Store'}
-                        </span>
-                      </h3>
-                      <p className="text-xs text-slate-500 mt-1">
-                        {language === 'vi'
-                          ? 'Dọn dẹp các đơn hàng mẫu thử nghiệm, nhập danh mục sản phẩm thật, hoặc khôi phục dữ liệu demo.'
-                          : 'Clear mock demo transactions, import your actual product catalog, or restore default state.'}
-                      </p>
+                    {/* Real Data Management Card */}
+                    <div className={`p-6 rounded-2xl border ${isDark ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'} space-y-4`}>
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <h3 className="font-semibold text-base text-slate-900 dark:text-white flex items-center gap-2">
+                            <span>{language === 'vi' ? 'Quản lý Dữ liệu Thực tế Cửa hàng' : 'Store Real Data Management'}</span>
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300">
+                              {language === 'vi' ? '1 Chi nhánh duy nhất' : 'Single Store'}
+                            </span>
+                          </h3>
+                          <p className="text-xs text-slate-500 mt-1">
+                            {language === 'vi'
+                              ? 'Dọn dẹp các đơn hàng mẫu thử nghiệm, nhập danh mục sản phẩm thật, hoặc khôi phục dữ liệu demo.'
+                              : 'Clear mock demo transactions, import your actual product catalog, or restore default state.'}
+                          </p>
+                        </div>
+                        <button
+                          onClick={() => setIsRealDataModalOpen(true)}
+                          className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs rounded-xl shadow-sm shadow-blue-500/20 transition-all"
+                        >
+                          {language === 'vi' ? 'Mở Bảng điều khiển Dữ liệu' : 'Open Data Manager'}
+                        </button>
+                      </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2 text-xs">
+                        <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/60 dark:border-slate-700/60">
+                          <span className="text-slate-400 text-[11px] block">{language === 'vi' ? 'Sản phẩm trong kho' : 'Stock Products'}</span>
+                          <span className="text-base font-bold text-slate-900 dark:text-white">{products.length} {language === 'vi' ? 'mặt hàng' : 'items'}</span>
+                        </div>
+                        <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/60 dark:border-slate-700/60">
+                          <span className="text-slate-400 text-[11px] block">{language === 'vi' ? 'Tổng đơn bán ra' : 'Recorded Orders'}</span>
+                          <span className="text-base font-bold text-slate-900 dark:text-white">{orders.length} {language === 'vi' ? 'đơn hàng' : 'orders'}</span>
+                        </div>
+                        <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/60 dark:border-slate-700/60">
+                          <span className="text-slate-400 text-[11px] block">{language === 'vi' ? 'Khách hàng lưu trữ' : 'Customer Profiles'}</span>
+                          <span className="text-base font-bold text-slate-900 dark:text-white">{customers.length} {language === 'vi' ? 'khách hàng' : 'customers'}</span>
+                        </div>
+                      </div>
                     </div>
+
+                    <div className={`p-6 rounded-2xl border ${isDark ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'} space-y-4`}>
+                      <h3 className="font-semibold text-base">{language === 'vi' ? 'Thông tin Cửa hàng' : 'Store Information'}</h3>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+                        <div>
+                          <label className="block text-slate-500 mb-1">{language === 'vi' ? 'Tên cửa hàng' : 'Store Name'}</label>
+                          <input
+                            type="text"
+                            defaultValue="SmartSale AI Store"
+                            className={`w-full p-2.5 rounded-xl border outline-none ${isDark ? 'bg-slate-800 border-slate-700 text-white' : 'bg-slate-50 border-slate-200'}`}
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-slate-500 mb-1">{language === 'vi' ? 'Số điện thoại hotline' : 'Hotline Number'}</label>
+                          <input
+                            type="text"
+                            defaultValue="028 3822 9999"
+                            className={`w-full p-2.5 rounded-xl border outline-none ${isDark ? 'bg-slate-800 border-slate-700 text-white' : 'bg-slate-50 border-slate-200'}`}
+                          />
+                        </div>
+                        <div className="md:col-span-2">
+                          <label className="block text-slate-500 mb-1">{language === 'vi' ? 'Địa chỉ cửa hàng & kho' : 'Store & Warehouse Address'}</label>
+                          <input
+                            type="text"
+                            defaultValue="68 Nguyễn Huệ, Phường Bến Nghé, Quận 1, TP. Hồ Chí Minh"
+                            className={`w-full p-2.5 rounded-xl border outline-none ${isDark ? 'bg-slate-800 border-slate-700 text-white' : 'bg-slate-50 border-slate-200'}`}
+                          />
+                        </div>
+                      </div>
+                      <div className="pt-4 flex justify-end">
+                        <button
+                          onClick={() => showToast(language === 'vi' ? 'Đã lưu cấu hình cửa hàng thành công!' : 'Store settings saved successfully!')}
+                          className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs rounded-xl shadow-sm shadow-blue-500/20"
+                        >
+                          {t.saveChanges}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {currentTab === 'support' && (
+                  <div className="max-w-2xl mx-auto text-center py-12 space-y-4">
+                    <div className="w-16 h-16 rounded-2xl bg-blue-100 text-blue-600 dark:bg-blue-950 dark:text-blue-400 mx-auto flex items-center justify-center text-2xl font-bold">
+                      💬
+                    </div>
+                    <h2 className="text-xl font-bold text-slate-900 dark:text-white">
+                      {language === 'vi' ? 'Trung tâm Trợ giúp 24/7' : '24/7 Help Center'}
+                    </h2>
+                    <p className="text-sm text-slate-500">
+                      {language === 'vi'
+                        ? 'Đội ngũ kỹ thuật SmartSale AI luôn sẵn sàng hỗ trợ bạn qua Hotline 1900 6868 hoặc Live Chat AI.'
+                        : 'SmartSale AI technical support is always ready to assist you via Hotline 1900 6868 or Live AI Chat.'}
+                    </p>
                     <button
-                      onClick={() => setIsRealDataModalOpen(true)}
-                      className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs rounded-xl shadow-sm shadow-blue-500/20 transition-all"
+                      onClick={() => setCurrentTab('ai-assistant')}
+                      className="px-6 py-2.5 rounded-xl bg-blue-600 text-white text-xs font-bold shadow-md shadow-blue-500/20"
                     >
-                      {language === 'vi' ? 'Mở Bảng điều khiển Dữ liệu' : 'Open Data Manager'}
+                      {language === 'vi' ? 'Mở Trợ lý AI ngay' : 'Open AI Assistant'}
                     </button>
                   </div>
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2 text-xs">
-                    <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/60 dark:border-slate-700/60">
-                      <span className="text-slate-400 text-[11px] block">{language === 'vi' ? 'Sản phẩm trong kho' : 'Stock Products'}</span>
-                      <span className="text-base font-bold text-slate-900 dark:text-white">{products.length} {language === 'vi' ? 'mặt hàng' : 'items'}</span>
-                    </div>
-                    <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/60 dark:border-slate-700/60">
-                      <span className="text-slate-400 text-[11px] block">{language === 'vi' ? 'Tổng đơn bán ra' : 'Recorded Orders'}</span>
-                      <span className="text-base font-bold text-slate-900 dark:text-white">{orders.length} {language === 'vi' ? 'đơn hàng' : 'orders'}</span>
-                    </div>
-                    <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/60 dark:border-slate-700/60">
-                      <span className="text-slate-400 text-[11px] block">{language === 'vi' ? 'Khách hàng lưu trữ' : 'Customer Profiles'}</span>
-                      <span className="text-base font-bold text-slate-900 dark:text-white">{customers.length} {language === 'vi' ? 'khách hàng' : 'customers'}</span>
-                    </div>
-                  </div>
-                </div>
-
-                <div className={`p-6 rounded-2xl border ${isDark ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'} space-y-4`}>
-                  <h3 className="font-semibold text-base">{language === 'vi' ? 'Thông tin Cửa hàng' : 'Store Information'}</h3>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
-                    <div>
-                      <label className="block text-slate-500 mb-1">{language === 'vi' ? 'Tên cửa hàng' : 'Store Name'}</label>
-                      <input
-                        type="text"
-                        defaultValue="SmartSale AI Store"
-                        className={`w-full p-2.5 rounded-xl border outline-none ${isDark ? 'bg-slate-800 border-slate-700 text-white' : 'bg-slate-50 border-slate-200'}`}
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-slate-500 mb-1">{language === 'vi' ? 'Số điện thoại hotline' : 'Hotline Number'}</label>
-                      <input
-                        type="text"
-                        defaultValue="028 3822 9999"
-                        className={`w-full p-2.5 rounded-xl border outline-none ${isDark ? 'bg-slate-800 border-slate-700 text-white' : 'bg-slate-50 border-slate-200'}`}
-                      />
-                    </div>
-                    <div className="md:col-span-2">
-                      <label className="block text-slate-500 mb-1">{language === 'vi' ? 'Địa chỉ cửa hàng & kho' : 'Store & Warehouse Address'}</label>
-                      <input
-                        type="text"
-                        defaultValue="68 Nguyễn Huệ, Phường Bến Nghé, Quận 1, TP. Hồ Chí Minh"
-                        className={`w-full p-2.5 rounded-xl border outline-none ${isDark ? 'bg-slate-800 border-slate-700 text-white' : 'bg-slate-50 border-slate-200'}`}
-                      />
-                    </div>
-                  </div>
-                  <div className="pt-4 flex justify-end">
-                    <button
-                      onClick={() => showToast(language === 'vi' ? 'Đã lưu cấu hình cửa hàng thành công!' : 'Store settings saved successfully!')}
-                      className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs rounded-xl shadow-sm shadow-blue-500/20"
-                    >
-                      {t.saveChanges}
-                    </button>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {currentTab === 'support' && (
-              <div className="max-w-2xl mx-auto text-center py-12 space-y-4">
-                <div className="w-16 h-16 rounded-2xl bg-blue-100 text-blue-600 dark:bg-blue-950 dark:text-blue-400 mx-auto flex items-center justify-center text-2xl font-bold">
-                  💬
-                </div>
-                <h2 className="text-xl font-bold text-slate-900 dark:text-white">
-                  {language === 'vi' ? 'Trung tâm Trợ giúp 24/7' : '24/7 Help Center'}
-                </h2>
-                <p className="text-sm text-slate-500">
-                  {language === 'vi'
-                    ? 'Đội ngũ kỹ thuật SmartSale AI luôn sẵn sàng hỗ trợ bạn qua Hotline 1900 6868 hoặc Live Chat AI.'
-                    : 'SmartSale AI technical support is always ready to assist you via Hotline 1900 6868 or Live AI Chat.'}
-                </p>
-                <button
-                  onClick={() => setCurrentTab('ai-assistant')}
-                  className="px-6 py-2.5 rounded-xl bg-blue-600 text-white text-xs font-bold shadow-md shadow-blue-500/20"
-                >
-                  {language === 'vi' ? 'Mở Trợ lý AI ngay' : 'Open AI Assistant'}
-                </button>
-              </div>
-            )}
-            </>
+                )}
+              </>
             )}
           </main>
         </div>
