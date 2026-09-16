@@ -23,7 +23,12 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 if current_dir not in sys.path:
     sys.path.insert(0, current_dir)
 
-from face_engine import load_image_from_base64, extract_face_and_embedding, compute_metrics
+from face_engine import (
+    load_image_from_base64,
+    extract_face_and_embedding,
+    extract_all_faces_and_embeddings,
+    compute_metrics
+)
 
 app = FastAPI(
     title="SmartShop Face Recognition Service",
@@ -88,7 +93,7 @@ def health_check():
         })
     return {
         "status": "healthy",
-        "engine": "MTCNN (Detection/Alignment) + FaceNet InceptionResnetV1 (VGGFace2)",
+        "engine": "MTCNN (keep_all=True) + FaceNet InceptionResnetV1 (VGGFace2)",
         "vectorDimensions": 512,
         "enrolledCount": len(profiles),
         "profiles": profiles
@@ -107,21 +112,22 @@ def verify_face(req: VerifyRequest):
             detail="Chưa có dữ liệu khuôn mặt mẫu nào được nạp vào hệ thống. Vui lòng chạy enroll.py trước."
         )
 
-    # 1. Giải mã ảnh và xử lý qua MTCNN + FaceNet
+    # 1. Giải mã ảnh và phát hiện tất cả các khuôn mặt qua MTCNN
     try:
         img = load_image_from_base64(req.image)
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Không thể giải mã hình ảnh: {str(e)}")
 
-    embedding, bbox, landmarks, prob = extract_face_and_embedding(img)
+    detected_faces = extract_all_faces_and_embeddings(img)
 
-    if embedding is None:
+    if not detected_faces:
         return {
             "success": False,
             "matched": False,
             "error": "Không tìm thấy khuôn mặt rõ ràng trong khung hình. Vui lòng nhìn thẳng vào camera, đủ sáng và không bị che khuất.",
-            "detectionProb": prob,
-            "hasFace": False
+            "detectionProb": 0.0,
+            "hasFace": False,
+            "faceCount": 0
         }
 
     # 2. Xác định đối tượng mục tiêu cần so khớp
@@ -143,90 +149,132 @@ def verify_face(req: VerifyRequest):
             if "thanphucuong" in db:
                 target_key = "thanphucuong"
             elif len(db) > 0:
-                # Lấy profile quản lý đầu tiên
                 for k, v in db.items():
                     if v.get("role") == "manager":
                         target_key = k
                         break
 
-    # Nếu vẫn chưa thấy, mặc định so sánh với toàn bộ database để tìm người giống nhất (1:N Identification)
-    best_candidate_key = None
-    best_cosine_sim = -1.0
-    all_comparisons = {}
+    # 3. Duyệt và nhận diện tất cả khuôn mặt trong khung hình
+    evaluated_faces = []
+    matched_face = None
 
-    for k, v in db.items():
-        stored_emb = np.array(v["embedding"], dtype=np.float32)
-        c_sim, e_dist, s_percent = compute_metrics(embedding, stored_emb)
-        all_comparisons[k] = {
-            "name": v.get("display_name", k),
-            "role": v.get("role"),
-            "cosineSim": round(c_sim, 4),
-            "euclidDist": round(e_dist, 4),
-            "similarityPercent": s_percent
+    for idx, face_item in enumerate(detected_faces):
+        emb = face_item["embedding"]
+        best_candidate_key = None
+        best_cosine_sim = -1.0
+        best_metrics = {}
+        all_comps = {}
+
+        for k, v in db.items():
+            stored_emb = np.array(v["embedding"], dtype=np.float32)
+            c_sim, e_dist, s_percent = compute_metrics(emb, stored_emb)
+            all_comps[k] = {
+                "name": v.get("display_name", k),
+                "role": v.get("role"),
+                "cosineSim": round(c_sim, 4),
+                "euclidDist": round(e_dist, 4),
+                "similarityPercent": s_percent
+            }
+            if c_sim > best_cosine_sim:
+                best_cosine_sim = c_sim
+                best_candidate_key = k
+                best_metrics = all_comps[k]
+
+        is_known = best_cosine_sim >= 0.70
+        is_this_target = False
+        if target_key:
+            target_metrics = all_comps.get(target_key, {})
+            target_cosine = target_metrics.get("cosineSim", 0.0)
+            if target_cosine >= 0.72 and (best_candidate_key == target_key or target_cosine >= 0.78):
+                is_this_target = True
+
+        info = db.get(best_candidate_key, {}) if is_known else {}
+        face_desc = {
+            "index": idx,
+            "name": info.get("display_name", "Người lạ / Chưa đăng ký") if is_known else "Người lạ / Chưa đăng ký",
+            "role": info.get("role", "unknown") if is_known else "unknown",
+            "key": best_candidate_key if is_known else "unknown",
+            "isKnown": is_known,
+            "isTarget": is_this_target,
+            "cosineSimilarity": best_metrics.get("cosineSim", 0.0),
+            "euclideanDistance": best_metrics.get("euclidDist", 2.0),
+            "similarityPercent": best_metrics.get("similarityPercent", 0.0),
+            "boundingBox": face_item["box"],
+            "landmarks": face_item["landmarks"],
+            "detectionProb": face_item["prob"],
+            "comparisons": all_comps
         }
-        if c_sim > best_cosine_sim:
-            best_cosine_sim = c_sim
-            best_candidate_key = k
+        evaluated_faces.append(face_desc)
 
-    # 3. Đánh giá tính khớp (Verification 1:1)
+        if is_this_target and matched_face is None:
+            matched_face = face_desc
+
+    # Nếu có target_key: kiểm tra xem có khuôn mặt nào khớp không
     if target_key and target_key in db:
         target_info = db[target_key]
-        target_metrics = all_comparisons[target_key]
-        target_cosine = target_metrics["cosineSim"]
-        target_euclid = target_metrics["euclidDist"]
-        target_percent = target_metrics["similarityPercent"]
+        target_name = target_info.get("display_name", target_key)
 
-        # Ngưỡng quyết định (Decision Threshold) của FaceNet:
-        # Cosine Similarity >= 0.72 VÀ là người có độ tương đồng cao nhất
-        is_matched = (target_cosine >= 0.72) and (best_candidate_key == target_key or target_cosine >= 0.78)
-
-        return {
-            "success": True,
-            "matched": is_matched,
-            "target": target_key,
-            "targetName": target_info.get("display_name", target_key),
-            "targetRole": target_info.get("role", "staff"),
-            "cosineSimilarity": target_cosine,
-            "euclideanDistance": target_euclid,
-            "similarityPercent": target_percent,
-            "threshold": 0.72,
-            "boundingBox": bbox,
-            "landmarks": landmarks,
-            "detectionProb": round(prob, 4),
-            "bestCandidate": best_candidate_key,
-            "comparisons": all_comparisons,
-            "message": (
-                f"Xác thực khuôn mặt thành công: {target_info.get('display_name')} (Khớp {target_percent}%)"
-                if is_matched else
-                f"Khuôn mặt không khớp với hồ sơ {target_info.get('display_name')} (Chỉ đạt {target_percent}% tương đồng)"
-            )
-        }
+        if matched_face:
+            other_names = [f["name"] for f in evaluated_faces if f != matched_face]
+            multi_note = f" (Cùng xuất hiện: {', '.join(other_names)})" if other_names else ""
+            return {
+                "success": True,
+                "matched": True,
+                "target": target_key,
+                "targetName": target_name,
+                "targetRole": target_info.get("role", "staff"),
+                "cosineSimilarity": matched_face["cosineSimilarity"],
+                "euclideanDistance": matched_face["euclideanDistance"],
+                "similarityPercent": matched_face["similarityPercent"],
+                "threshold": 0.72,
+                "boundingBox": matched_face["boundingBox"],
+                "landmarks": matched_face["landmarks"],
+                "detectionProb": matched_face["detectionProb"],
+                "faceCount": len(evaluated_faces),
+                "faces": evaluated_faces,
+                "message": f"Xác thực khuôn mặt thành công: {target_name} (Khớp {matched_face['similarityPercent']}%){multi_note}"
+            }
+        else:
+            # Tìm khuôn mặt có độ tương tự cao nhất với target để báo phần trăm
+            best_target_sim = max([f["comparisons"].get(target_key, {}).get("similarityPercent", 0.0) for f in evaluated_faces], default=0.0)
+            return {
+                "success": True,
+                "matched": False,
+                "target": target_key,
+                "targetName": target_name,
+                "targetRole": target_info.get("role", "staff"),
+                "similarityPercent": best_target_sim,
+                "threshold": 0.72,
+                "faceCount": len(evaluated_faces),
+                "faces": evaluated_faces,
+                "boundingBox": evaluated_faces[0]["boundingBox"] if evaluated_faces else None,
+                "landmarks": evaluated_faces[0]["landmarks"] if evaluated_faces else None,
+                "message": f"Không tìm thấy khuôn mặt khớp với hồ sơ {target_name} trong khung hình (Chỉ đạt tối đa {best_target_sim}% tương đồng)."
+            }
     else:
-        # Chế độ 1:N: Nhận dạng tự do
-        best_info = db[best_candidate_key]
-        best_metrics = all_comparisons[best_candidate_key]
-        is_matched = best_metrics["cosineSim"] >= 0.72
-
+        # Chế độ 1:N: Nhận diện tự do
+        primary = evaluated_faces[0]
         return {
             "success": True,
-            "matched": is_matched,
-            "target": best_candidate_key,
-            "targetName": best_info.get("display_name", best_candidate_key),
-            "targetRole": best_info.get("role", "staff"),
-            "cosineSimilarity": best_metrics["cosineSim"],
-            "euclideanDistance": best_metrics["euclidDist"],
-            "similarityPercent": best_metrics["similarityPercent"],
+            "matched": primary["isKnown"],
+            "target": primary["key"],
+            "targetName": primary["name"],
+            "targetRole": primary["role"],
+            "cosineSimilarity": primary["cosineSimilarity"],
+            "euclideanDistance": primary["euclideanDistance"],
+            "similarityPercent": primary["similarityPercent"],
             "threshold": 0.72,
-            "boundingBox": bbox,
-            "landmarks": landmarks,
-            "detectionProb": round(prob, 4),
+            "boundingBox": primary["boundingBox"],
+            "landmarks": primary["landmarks"],
+            "detectionProb": primary["detectionProb"],
+            "faceCount": len(evaluated_faces),
+            "faces": evaluated_faces,
             "imgWidth": img.width,
             "imgHeight": img.height,
-            "comparisons": all_comparisons,
             "message": (
-                f"Nhận diện: {best_info.get('display_name')} (Độ tin cậy: {best_metrics['similarityPercent']}%)"
-                if is_matched else
-                "Không nhận diện được danh tính phù hợp trong hệ thống."
+                f"Nhận diện: {primary['name']} ({primary['similarityPercent']}%)"
+                if primary["isKnown"] else
+                "Không nhận diện được danh tính trong hệ thống."
             )
         }
 
@@ -234,85 +282,123 @@ def verify_face(req: VerifyRequest):
 @app.post("/api/cv/track")
 def track_face(req: VerifyRequest):
     """
-    Endpoint tối ưu tốc độ cao cho Realtime Live Tracking:
-    Nhận frame ảnh, tìm vị trí Bounding Box, 5 điểm Landmarks,
-    và so khớp ngay lập tức để trả về TÊN người đứng trước camera.
+    Endpoint tối ưu tốc độ cao cho Realtime Live Tracking ĐA KHUÔN MẶT:
+    Phát hiện TOÀN BỘ khuôn mặt (Chủ cửa hàng, Quản lý, Người lạ),
+    gắn Bounding Box & nhãn danh tính cho từng người cùng lúc.
     """
     if not req.image or len(req.image) < 100:
-        return {"hasFace": False}
+        return {"hasFace": False, "faceCount": 0, "faces": []}
 
     db = load_database()
     if not db:
-        return {"hasFace": False, "error": "Chưa nạp database"}
+        return {"hasFace": False, "faceCount": 0, "faces": [], "error": "Chưa nạp database"}
 
     try:
         img = load_image_from_base64(req.image)
         img_w, img_h = img.width, img.height
     except Exception:
-        return {"hasFace": False}
+        return {"hasFace": False, "faceCount": 0, "faces": []}
 
-    embedding, bbox, landmarks, prob = extract_face_and_embedding(img)
-    if embedding is None or bbox is None:
-        return {"hasFace": False, "imgWidth": img_w, "imgHeight": img_h}
+    detected_faces = extract_all_faces_and_embeddings(img)
+    if not detected_faces:
+        return {"hasFace": False, "faceCount": 0, "faces": [], "imgWidth": img_w, "imgHeight": img_h}
 
-    # So sánh với tất cả hồ sơ để tìm người có độ tương đồng cao nhất
-    best_candidate_key = None
-    best_cosine_sim = -1.0
-    all_comparisons = {}
-
-    for k, v in db.items():
-        stored_emb = np.array(v["embedding"], dtype=np.float32)
-        c_sim, e_dist, s_percent = compute_metrics(embedding, stored_emb)
-        all_comparisons[k] = {
-            "name": v.get("display_name", k),
-            "role": v.get("role"),
-            "cosineSim": round(c_sim, 4),
-            "similarityPercent": s_percent
-        }
-        if c_sim > best_cosine_sim:
-            best_cosine_sim = c_sim
-            best_candidate_key = k
-
-    best_info = db.get(best_candidate_key, {})
-    best_metrics = all_comparisons.get(best_candidate_key, {})
-
-    # Kiểm tra xem có khớp với tài khoản mục tiêu đang đăng nhập không
+    # Xác định đối tượng mục tiêu đang đăng nhập (nếu có)
     target_key = None
-    if req.email:
-        clean_email = req.email.strip().lower()
+    clean_email = req.email.strip().lower() if req.email else ""
+    clean_role = req.role.strip().lower() if req.role else ""
+
+    if clean_email:
         for k, v in db.items():
             if v.get("email", "").lower() == clean_email:
                 target_key = k
                 break
-    if not target_key and req.role:
-        clean_role = req.role.strip().lower()
+    if not target_key and clean_role:
         if clean_role == "admin" and "nguyentatphi" in db:
             target_key = "nguyentatphi"
         elif clean_role == "manager" and "thanphucuong" in db:
             target_key = "thanphucuong"
 
-    is_matched = False
-    is_known = best_cosine_sim >= 0.70
-    if target_key:
-        target_sim = all_comparisons.get(target_key, {}).get("cosineSim", 0)
-        is_matched = (target_sim >= 0.72) and (best_candidate_key == target_key or target_sim >= 0.78)
+    # Nhận diện từng khuôn mặt
+    faces_list = []
+    any_target_matched = False
 
-    recognized_name = best_info.get("display_name", "Không xác định") if is_known else "Chưa nhận diện / Người lạ"
-    recognized_role = best_info.get("role", "unknown") if is_known else "unknown"
+    for item in detected_faces:
+        emb = item["embedding"]
+        best_key = None
+        best_cosine = -1.0
+        all_metrics = {}
+
+        for k, v in db.items():
+            stored_emb = np.array(v["embedding"], dtype=np.float32)
+            c_sim, _, s_percent = compute_metrics(emb, stored_emb)
+            all_metrics[k] = {
+                "cosine": c_sim,
+                "percent": s_percent
+            }
+            if c_sim > best_cosine:
+                best_cosine = c_sim
+                best_key = k
+
+        is_known = best_cosine >= 0.70
+        is_target = False
+
+        if target_key:
+            target_metric = all_metrics.get(target_key)
+            if target_metric and target_metric["cosine"] >= 0.72:
+                if best_key == target_key or target_metric["cosine"] >= 0.78:
+                    is_target = True
+                    any_target_matched = True
+
+        if is_known:
+            info = db.get(best_key, {})
+            name = info.get("display_name", best_key)
+            role = info.get("role", "staff")
+            key = best_key
+            percent = all_metrics[best_key]["percent"]
+        else:
+            name = "Người lạ"
+            role = "unknown"
+            key = "unknown"
+            percent = max(0.0, all_metrics[best_key]["percent"]) if best_key else 0.0
+
+        faces_list.append({
+            "name": name,
+            "role": role,
+            "key": key,
+            "isKnown": is_known,
+            "isTarget": is_target,
+            "similarityPercent": percent,
+            "cosineSimilarity": round(best_cosine, 4),
+            "box": item["box"],
+            "landmarks": item["landmarks"],
+            "detectionProb": item["prob"]
+        })
+
+    # Chọn khuôn mặt ưu tiên (Primary Face) cho backward-compatibility
+    primary = faces_list[0]
+    for f in faces_list:
+        if f["isTarget"]:
+            primary = f
+            break
+        elif f["isKnown"] and not primary["isKnown"]:
+            primary = f
 
     return {
         "hasFace": True,
-        "name": recognized_name,
-        "role": recognized_role,
-        "key": best_candidate_key if is_known else "unknown",
-        "isKnown": is_known,
-        "isTarget": is_matched,
+        "faceCount": len(faces_list),
+        "faces": faces_list,
+        "name": primary["name"],
+        "role": primary["role"],
+        "key": primary["key"],
+        "isKnown": primary["isKnown"],
+        "isTarget": any_target_matched,
         "targetKey": target_key,
-        "similarityPercent": best_metrics.get("similarityPercent", 0),
-        "cosineSimilarity": best_metrics.get("cosineSim", 0),
-        "box": bbox,  # [x1, y1, x2, y2] trong toạ độ ảnh
-        "landmarks": landmarks,
-        "detectionProb": round(prob, 3),
+        "similarityPercent": primary["similarityPercent"],
+        "cosineSimilarity": primary["cosineSimilarity"],
+        "box": primary["box"],
+        "landmarks": primary["landmarks"],
+        "detectionProb": primary["detectionProb"],
         "imgWidth": img_w,
         "imgHeight": img_h
     }
