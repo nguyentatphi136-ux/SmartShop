@@ -122,6 +122,22 @@ export const UsersPermissionsScreen: React.FC<UsersPermissionsScreenProps> = ({
       return;
     }
 
+    if (newStaffRole === 'admin') {
+      const currentAdmins = staffList.filter((s) => s.role === 'admin').length;
+      if (currentAdmins >= 1) {
+        setFormError('Hệ thống chỉ cho phép tối đa 1 Chủ cửa hàng.');
+        return;
+      }
+    }
+
+    if (newStaffRole === 'manager') {
+      const currentManagers = staffList.filter((s) => s.role === 'manager').length;
+      if (currentManagers >= 2) {
+        setFormError('chỉ tạo được 2 quản lý');
+        return;
+      }
+    }
+
     if (onAddStaff) {
       onAddStaff({
         name: cleanName,
@@ -756,8 +772,12 @@ export const UsersPermissionsScreen: React.FC<UsersPermissionsScreenProps> = ({
                   >
                     <option value="cashier">Thu ngân (Cashier - Bán hàng POS)</option>
                     <option value="inventory_staff">Nhân viên Kho (Inventory Staff)</option>
-                    <option value="manager">Quản lý cửa hàng (Manager)</option>
-                    <option value="admin">Chủ cửa hàng (Admin)</option>
+                    <option value="manager">
+                      Quản lý cửa hàng (Manager) {staffList.filter((s) => s.role === 'manager').length >= 2 ? '⚠️ (Đã đủ 2/2 quản lý)' : `(${staffList.filter((s) => s.role === 'manager').length}/2)`}
+                    </option>
+                    <option value="admin">
+                      Chủ cửa hàng (Admin) {staffList.filter((s) => s.role === 'admin').length >= 1 ? '⚠️ (Đã có 1/1 chủ cửa hàng)' : '(Tối đa 1)'}
+                    </option>
                   </select>
                 </div>
 
@@ -905,8 +925,12 @@ export const UsersPermissionsScreen: React.FC<UsersPermissionsScreenProps> = ({
                         : 'bg-slate-50 border-slate-200 text-slate-900 focus:border-blue-500'
                     }`}
                   >
-                    <option value="admin">Chủ cửa hàng (Admin)</option>
-                    <option value="manager">Quản lý (Manager)</option>
+                    <option value="admin">
+                      Chủ cửa hàng (Admin) {staffList.filter((s) => s.id !== editingStaff.id && s.role === 'admin').length >= 1 ? '⚠️ (Đã có 1/1)' : ''}
+                    </option>
+                    <option value="manager">
+                      Quản lý (Manager) {staffList.filter((s) => s.id !== editingStaff.id && s.role === 'manager').length >= 2 ? '⚠️ (Đã đủ 2/2)' : ''}
+                    </option>
                     <option value="cashier">Thu ngân (Cashier)</option>
                     <option value="inventory_staff">Nhân viên Kho (Inventory)</option>
                   </select>
@@ -964,8 +988,24 @@ export const UsersPermissionsScreen: React.FC<UsersPermissionsScreenProps> = ({
                 <button
                   type="button"
                   onClick={() => {
-                    if (onUpdateStaff && editingStaff) {
-                      onUpdateStaff(editingStaff);
+                    if (editingStaff) {
+                      if (editingStaff.role === 'admin') {
+                        const otherAdmins = staffList.filter((s) => s.id !== editingStaff.id && s.role === 'admin').length;
+                        if (otherAdmins >= 1) {
+                          alert('Hệ thống chỉ cho phép tối đa 1 Chủ cửa hàng.');
+                          return;
+                        }
+                      }
+                      if (editingStaff.role === 'manager') {
+                        const otherManagers = staffList.filter((s) => s.id !== editingStaff.id && s.role === 'manager').length;
+                        if (otherManagers >= 2) {
+                          alert('chỉ tạo được 2 quản lý');
+                          return;
+                        }
+                      }
+                      if (onUpdateStaff) {
+                        onUpdateStaff(editingStaff);
+                      }
                     }
                     setEditingStaff(null);
                   }}

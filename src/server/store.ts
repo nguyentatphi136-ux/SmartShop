@@ -83,23 +83,8 @@ export function getStoreState(): StoreState {
   const row = database.prepare('SELECT payload FROM store_state WHERE id = 1').get() as { payload: string };
   const parsed = JSON.parse(row.payload) as Partial<StoreState>;
 
-  // Đảm bảo danh sách nhân viên có đầy đủ cờ faceRequired và hồ sơ quản lý
+  // Đảm bảo danh sách nhân viên có đầy đủ cờ faceRequired
   let staffList = parsed.staffList || seedState.staffList;
-  const hasCuong = staffList.some((s) => s.email.toLowerCase() === 'cuong.than@smartsale.ai');
-  if (!hasCuong) {
-    const cuongStaff: StaffUser = {
-      id: 'user-2-cuong',
-      name: 'Thân Phú Cường (Quản lý)',
-      email: 'cuong.than@smartsale.ai',
-      phone: '0912 345 678',
-      role: 'manager',
-      status: 'active',
-      branch: 'Cửa hàng chính',
-      faceRequired: true,
-      faceRegistered: true,
-    };
-    staffList = [...staffList, cuongStaff];
-  }
 
   // Chuẩn hoá cờ faceRequired theo phân quyền: chỉ admin và manager mới cần
   staffList = staffList.map((s) => ({
@@ -351,15 +336,32 @@ export function addStoreStaff(staffData: Omit<StaffUser, 'id'>): { state: StoreS
       throw new Error(`Email "${cleanEmail}" đã được sử dụng bởi một nhân sự khác!`);
     }
 
+    // Giới hạn hệ thống: Tối đa 1 Chủ cửa hàng và 2 Quản lý
+    const targetRole = staffData.role || 'cashier';
+    if (targetRole === 'admin') {
+      const adminCount = state.staffList.filter((s) => s.role === 'admin').length;
+      if (adminCount >= 1) {
+        throw new Error('Hệ thống chỉ cho phép tối đa 1 Chủ cửa hàng.');
+      }
+    }
+    if (targetRole === 'manager') {
+      const managerCount = state.staffList.filter((s) => s.role === 'manager').length;
+      if (managerCount >= 2) {
+        throw new Error('chỉ tạo được 2 quản lý');
+      }
+    }
+
     const newStaff: StaffUser = {
       ...staffData,
       id: `user-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
       email: cleanEmail,
       name: staffData.name?.trim() || 'Nhân viên mới',
       phone: staffData.phone?.trim() || '',
-      role: staffData.role || 'cashier',
+      role: targetRole,
       status: staffData.status || 'active',
       branch: staffData.branch?.trim() || 'Cửa hàng chính',
+      faceRequired: targetRole === 'admin' || targetRole === 'manager',
+      faceRegistered: targetRole === 'admin' || targetRole === 'manager',
     };
 
     state.staffList = [...state.staffList, newStaff];
@@ -388,6 +390,20 @@ export function updateStoreStaff(updatedStaff: StaffUser): StoreState {
     );
     if (existingWithEmail) {
       throw new Error(`Email "${cleanEmail}" đã được sử dụng bởi nhân sự "${existingWithEmail.name}".`);
+    }
+
+    // Giới hạn hệ thống: Tối đa 1 Chủ cửa hàng và 2 Quản lý khi sửa đổi vai trò
+    if (updatedStaff.role === 'admin') {
+      const otherAdmins = state.staffList.filter((s) => s.id !== updatedStaff.id && s.role === 'admin').length;
+      if (otherAdmins >= 1) {
+        throw new Error('Hệ thống chỉ cho phép tối đa 1 Chủ cửa hàng.');
+      }
+    }
+    if (updatedStaff.role === 'manager') {
+      const otherManagers = state.staffList.filter((s) => s.id !== updatedStaff.id && s.role === 'manager').length;
+      if (otherManagers >= 2) {
+        throw new Error('chỉ tạo được 2 quản lý');
+      }
     }
 
     state.staffList = state.staffList.map((s) =>
