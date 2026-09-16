@@ -1,9 +1,16 @@
 import express from "express";
 import path from "path";
-import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
 import dotenv from "dotenv";
 import { randomInt, randomBytes } from "crypto";
+
+// Bộ bảo vệ chống sập tiến trình đột ngột (Crash Guard)
+process.on("uncaughtException", (err) => {
+  console.error("[SmartShop Server] Bắt lỗi ngoại lệ chưa xử lý (Uncaught Exception):", err);
+});
+process.on("unhandledRejection", (reason) => {
+  console.error("[SmartShop Server] Bắt promise bị từ chối chưa xử lý (Unhandled Rejection):", reason);
+});
 import * as nodemailer from "nodemailer";
 import {
   addStoreProduct,
@@ -25,6 +32,7 @@ import {
   updateStoreProduct,
   updateStoreStaff,
 } from "./src/server/store";
+import { StaffUser } from "./src/types";
 
 dotenv.config();
 
@@ -121,7 +129,7 @@ async function callGeminiWithTimeout(params: {
 
 async function startServer() {
   const app = express();
-  const PORT = 3000;
+  const PORT = Number(process.env.PORT || 3000);
 
   app.use(express.json({ limit: "10mb" }));
 
@@ -347,6 +355,13 @@ async function startServer() {
   }
   const verificationStore = new Map<string, VerificationEntry>();
 
+  interface FacePendingEntry {
+    email: string;
+    user: StaffUser;
+    expiresAt: number;
+  }
+  const facePendingStore = new Map<string, FacePendingEntry>();
+
   // Send verification code to email
   app.post("/api/auth/send-verification-code", async (req, res) => {
     const email = req.body?.email ? String(req.body.email).trim().toLowerCase() : "";
@@ -473,6 +488,27 @@ async function startServer() {
     }
 
     verificationStore.delete(email);
+
+    // CHỈ TÀI KHOẢN ADMIN (CHỦ CỬA HÀNG) VÀ MANAGER (QUẢN LÝ) MỚI CẦN XÁC THỰC KHUÔN MẶT
+    const isFaceRequired = staff.faceRequired || staff.role === "admin" || staff.role === "manager";
+    if (isFaceRequired) {
+      const tempToken = randomBytes(24).toString("hex");
+      facePendingStore.set(tempToken, {
+        email,
+        user: staff,
+        expiresAt: Date.now() + 10 * 60 * 1000, // 10 minutes to complete face scan
+      });
+
+      return res.json({
+        success: true,
+        requireFace: true,
+        tempToken,
+        user: staff,
+        message: "Xác thực mã OTP thành công. Vui lòng quét khuôn mặt để hoàn tất đăng nhập bảo mật.",
+      });
+    }
+
+    // THU NGÂN VÀ THỦ KHO: Đăng nhập thành công ngay lập tức (bỏ qua nhận diện khuôn mặt)
     const sessionToken = randomBytes(32).toString("hex");
     const expiresAt = Date.now() + 8 * 60 * 60 * 1000; // 8 hours validity
     createStoreSession(
@@ -485,11 +521,147 @@ async function startServer() {
 
     res.json({
       success: true,
+      requireFace: false,
       message: "Xác thực email thành công.",
       email,
       sessionToken,
       user: staff,
     });
+  });
+
+  // Verify Face ID via Python FastAPI service
+  app.post("/api/auth/verify-face", async (req, res) => {
+    const tempToken = req.body?.tempToken ? String(req.body.tempToken).trim() : "";
+    const email = req.body?.email ? String(req.body.email).trim().toLowerCase() : "";
+    const image = req.body?.image ? String(req.body.image) : "";
+
+    if (!image) {
+      return res.status(400).json({ error: "Thiếu dữ liệu hình ảnh từ camera." });
+    }
+
+    let pending = tempToken ? facePendingStore.get(tempToken) : null;
+    if (!pending && email) {
+      for (const [t, p] of facePendingStore.entries()) {
+        if (p.email.toLowerCase() === email && Date.now() < p.expiresAt) {
+          pending = p;
+          break;
+        }
+      }
+    }
+
+    const staff = pending?.user || getStoreState().staffList.find((s) => s.email.toLowerCase() === email);
+    if (!staff || staff.status !== "active") {
+      return res.status(403).json({ error: "Phiên xác thực đã hết hạn hoặc không hợp lệ. Vui lòng đăng nhập lại." });
+    }
+
+    try {
+      // Gửi request sang Python FastAPI service (cổng 8000)
+      const cvRes = await fetch("http://127.0.0.1:8000/api/cv/verify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          image,
+          role: staff.role,
+          email: staff.email,
+        }),
+      });
+
+      if (!cvRes.ok) {
+        const errData = (await cvRes.json().catch(() => ({}))) as any;
+        return res.status(400).json({
+          success: false,
+          error: errData.detail || "Không thể xử lý nhận diện khuôn mặt.",
+        });
+      }
+
+      const cvData = (await cvRes.json()) as any;
+      if (cvData.hasFace === false) {
+        return res.status(400).json({
+          success: false,
+          error: cvData.error || "Không tìm thấy khuôn mặt trong khung hình.",
+          details: cvData,
+        });
+      }
+
+      if (!cvData.matched) {
+        return res.status(401).json({
+          success: false,
+          error: cvData.message || `Khuôn mặt không khớp với hồ sơ ${staff.name}. Độ tương đồng: ${cvData.similarityPercent}%.`,
+          details: cvData,
+        });
+      }
+
+      // Xác thực khớp thành công! Tạo phiên đăng nhập chính thức
+      if (tempToken) {
+        facePendingStore.delete(tempToken);
+      }
+      const sessionToken = randomBytes(32).toString("hex");
+      const expiresAt = Date.now() + 8 * 60 * 60 * 1000;
+      createStoreSession(
+        sessionToken,
+        staff.email,
+        expiresAt,
+        typeof req.headers['user-agent'] === 'string' ? req.headers['user-agent'] : undefined,
+        req.ip
+      );
+
+      return res.json({
+        success: true,
+        message: cvData.message || `Xác thực khuôn mặt ${staff.name} thành công!`,
+        sessionToken,
+        user: staff,
+        matchDetails: cvData,
+      });
+    } catch (err: any) {
+      console.error("[Face Auth Service Error]", err);
+      return res.status(502).json({
+        error: "Dịch vụ nhận diện khuôn mặt (Python CV Service) chưa được khởi chạy hoặc không phản hồi.",
+        hint: "Vui lòng khởi động Python service tại http://127.0.0.1:8000 (chạy lệnh: python cv_service/server.py)",
+      });
+    }
+  });
+
+  // Check Python CV Service Status & Enrolled Profiles
+  app.get("/api/auth/cv-status", async (req, res) => {
+    try {
+      const cvRes = await fetch("http://127.0.0.1:8000/api/cv/health", { signal: AbortSignal.timeout(3000) });
+      if (cvRes.ok) {
+        const data = await cvRes.json();
+        return res.json({ online: true, ...data });
+      }
+      return res.json({ online: false, error: "Dịch vụ Python phản hồi mã lỗi " + cvRes.status });
+    } catch (e: any) {
+      return res.json({ online: false, error: e.message || "Không thể kết nối Python CV service" });
+    }
+  });
+
+  // Real-time Live Tracking & Name Recognition endpoint
+  app.post("/api/auth/track-face", async (req, res) => {
+    const image = req.body?.image ? String(req.body.image) : "";
+    const email = req.body?.email ? String(req.body.email) : "";
+    const role = req.body?.role ? String(req.body.role) : "";
+
+    if (!image) {
+      return res.json({ hasFace: false });
+    }
+
+    try {
+      const cvRes = await fetch("http://127.0.0.1:8000/api/cv/track", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ image, email, role }),
+        signal: AbortSignal.timeout(4000),
+      });
+
+      if (!cvRes.ok) {
+        return res.json({ hasFace: false });
+      }
+
+      const data = await cvRes.json();
+      return res.json(data);
+    } catch (_) {
+      return res.json({ hasFace: false });
+    }
   });
 
   app.get("/api/auth/session", (req, res) => {
@@ -1642,13 +1814,18 @@ Dựa trên dữ liệu thực tế gồm **${products.length} mã sản phẩm*
 3. **Kế hoạch ưu tiên**: Bổ sung hàng cho các sản phẩm bán chạy và tăng tốc độ xử lý đơn hàng tại quầy POS.`;
   }
 
-  // Vite middleware for dev or static for production
+  // Vite middleware cho môi trường Development hoặc Static File cho Production
   if (process.env.NODE_ENV !== "production") {
-    const vite = await createViteServer({
-      server: { middlewareMode: true },
-      appType: "spa",
-    });
-    app.use(vite.middlewares);
+    try {
+      const { createServer: createViteServer } = await import("vite");
+      const vite = await createViteServer({
+        server: { middlewareMode: true },
+        appType: "spa",
+      });
+      app.use(vite.middlewares);
+    } catch (viteErr) {
+      console.warn("[SmartShop Dev] Không thể nạp Vite middleware:", viteErr);
+    }
   } else {
     const distPath = path.join(process.cwd(), "dist");
     app.use(express.static(distPath));

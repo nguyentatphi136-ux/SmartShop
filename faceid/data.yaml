@@ -1,0 +1,13 @@
+train: ../train/images
+val: ../valid/images
+test: ../test/images
+
+nc: 2
+names: ['nguyentatphi', 'thanphucuong']
+
+roboflow:
+  workspace: new-workspace-phqi0
+  project: faceid-ddazk
+  version: 1
+  license: CC BY 4.0
+  url: https://universe.roboflow.com/new-workspace-phqi0/faceid-ddazk/dataset/1

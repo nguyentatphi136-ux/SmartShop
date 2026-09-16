@@ -182,6 +182,8 @@ export interface StaffUser {
   status: 'active' | 'inactive';
   branch: string;
   avatar?: string;
+  faceRequired?: boolean;
+  faceRegistered?: boolean;
 }
 
 export interface PermissionAuditEntry {

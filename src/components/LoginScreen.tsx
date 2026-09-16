@@ -15,9 +15,11 @@ import {
   Moon,
   Sun,
   UserCheck,
+  Scan,
 } from 'lucide-react';
 import { StaffUser } from '../types';
 import { INITIAL_STAFF } from '../data/initialData';
+import { FaceAuthModal } from './FaceAuthModal';
 
 interface LoginScreenProps {
   onLoginSuccess: (user: StaffUser) => void;
@@ -41,6 +43,11 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
   const [resendCountdown, setResendCountdown] = useState<number>(0);
   const [activeStaffList, setActiveStaffList] = useState<StaffUser[]>(staffList);
   const [devOtpHint, setDevOtpHint] = useState<string | null>(null);
+
+  // Trạng thái xác thực khuôn mặt (chỉ dành cho Chủ cửa hàng và Quản lý)
+  const [isFaceModalOpen, setIsFaceModalOpen] = useState<boolean>(false);
+  const [pendingFaceUser, setPendingFaceUser] = useState<StaffUser | null>(null);
+  const [tempToken, setTempToken] = useState<string>('');
 
   useEffect(() => {
     setActiveStaffList(staffList);
@@ -143,16 +150,28 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
         body: JSON.stringify({ email, code }),
       });
       const data = await res.json();
-      if (!res.ok || !data.success || !data.user || !data.sessionToken) {
+      if (!res.ok || !data.success || !data.user) {
         throw new Error(data.error || 'Mã xác thực không chính xác hoặc đã hết hạn.');
       }
 
+      // NẾU TÀI KHOẢN YÊU CẦU XÁC THỰC KHUÔN MẶT (CHỦ CỬA HÀNG HOẶC QUẢN LÝ):
+      if (data.requireFace && data.tempToken) {
+        setPendingFaceUser(data.user);
+        setTempToken(data.tempToken);
+        setIsFaceModalOpen(true);
+        setSuccessMsg(data.message || 'Mã OTP chính xác. Vui lòng quét khuôn mặt để hoàn tất.');
+        return;
+      }
+
+      // THU NGÂN VÀ THỦ KHO: Đăng nhập thành công ngay lập tức
       const authenticatedUser: StaffUser = data.user;
 
       // Save user session
       try {
         localStorage.setItem('smartsale_auth_user', JSON.stringify(authenticatedUser));
-        localStorage.setItem('smartsale_session_token', data.sessionToken);
+        if (data.sessionToken) {
+          localStorage.setItem('smartsale_session_token', data.sessionToken);
+        }
       } catch (e) {}
 
       onLoginSuccess(authenticatedUser);
@@ -161,6 +180,15 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
     } finally {
       setIsLoading(false);
     }
+  };
+
+  const handleFaceSuccess = (authenticatedUser: StaffUser, sessionToken: string) => {
+    setIsFaceModalOpen(false);
+    try {
+      localStorage.setItem('smartsale_auth_user', JSON.stringify(authenticatedUser));
+      localStorage.setItem('smartsale_session_token', sessionToken);
+    } catch (e) {}
+    onLoginSuccess(authenticatedUser);
   };
 
   return (
@@ -314,15 +342,26 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
                           <p className="text-[11px] text-slate-500 dark:text-slate-400">{staff.email}</p>
                         </div>
                       </div>
-                      <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
-                        {staff.role === 'admin'
-                          ? 'Chủ cửa hàng'
-                          : staff.role === 'manager'
-                          ? 'Quản lý'
-                          : staff.role === 'inventory_staff'
-                          ? 'Thủ kho'
-                          : 'Thu ngân'}
-                      </span>
+                      <div className="flex items-center gap-1.5">
+                        <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
+                          {staff.role === 'admin'
+                            ? 'Chủ cửa hàng'
+                            : staff.role === 'manager'
+                            ? 'Quản lý'
+                            : staff.role === 'inventory_staff'
+                            ? 'Thủ kho'
+                            : 'Thu ngân'}
+                        </span>
+                        {(staff.role === 'admin' || staff.role === 'manager') && (
+                          <span
+                            className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] font-bold bg-indigo-50 dark:bg-indigo-950/70 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800"
+                            title="Yêu cầu quét khuôn mặt Face ID sau khi nhập OTP"
+                          >
+                            <Scan className="w-2.5 h-2.5 text-indigo-600 dark:text-indigo-400" />
+                            Face ID
+                          </span>
+                        )}
+                      </div>
                     </button>
                   ))}
                 </div>
@@ -465,6 +504,20 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
           <span>Phiên bản v2.5 Enterprise</span>
         </div>
       </div>
+
+      {/* Modal Quét Khuôn mặt Face ID */}
+      <FaceAuthModal
+        isOpen={isFaceModalOpen}
+        user={pendingFaceUser}
+        tempToken={tempToken}
+        onSuccess={handleFaceSuccess}
+        onCancel={() => {
+          setIsFaceModalOpen(false);
+          setPendingFaceUser(null);
+          setTempToken('');
+        }}
+        isDark={isDark}
+      />
     </div>
   );
 };

@@ -82,9 +82,36 @@ if (!existingState) {
 export function getStoreState(): StoreState {
   const row = database.prepare('SELECT payload FROM store_state WHERE id = 1').get() as { payload: string };
   const parsed = JSON.parse(row.payload) as Partial<StoreState>;
+
+  // Đảm bảo danh sách nhân viên có đầy đủ cờ faceRequired và hồ sơ quản lý
+  let staffList = parsed.staffList || seedState.staffList;
+  const hasCuong = staffList.some((s) => s.email.toLowerCase() === 'cuong.than@smartsale.ai');
+  if (!hasCuong) {
+    const cuongStaff: StaffUser = {
+      id: 'user-2-cuong',
+      name: 'Thân Phú Cường (Quản lý)',
+      email: 'cuong.than@smartsale.ai',
+      phone: '0912 345 678',
+      role: 'manager',
+      status: 'active',
+      branch: 'Cửa hàng chính',
+      faceRequired: true,
+      faceRegistered: true,
+    };
+    staffList = [...staffList, cuongStaff];
+  }
+
+  // Chuẩn hoá cờ faceRequired theo phân quyền: chỉ admin và manager mới cần
+  staffList = staffList.map((s) => ({
+    ...s,
+    faceRequired: s.role === 'admin' || s.role === 'manager',
+    faceRegistered: s.faceRegistered !== undefined ? s.faceRegistered : (s.role === 'admin' || s.role === 'manager'),
+  }));
+
   return {
     ...seedState,
     ...parsed,
+    staffList,
     returns: parsed.returns || [],
     warrantyClaims: parsed.warrantyClaims || [],
     permissionAuditHistory: parsed.permissionAuditHistory || [],

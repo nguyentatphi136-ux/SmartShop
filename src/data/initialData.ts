@@ -323,15 +323,19 @@ export const INITIAL_STAFF: StaffUser[] = [
     role: 'admin',
     status: 'active',
     branch: 'Cửa hàng chính',
+    faceRequired: true,
+    faceRegistered: true,
   },
   {
     id: 'user-2',
-    name: 'Phạm Minh Trang',
-    email: 'trang.pham@smartsale.ai',
+    name: 'Thân Phú Cường (Quản lý)',
+    email: 'cuong.than@smartsale.ai',
     phone: '0912 345 678',
     role: 'manager',
     status: 'active',
     branch: 'Cửa hàng chính',
+    faceRequired: true,
+    faceRegistered: true,
   },
   {
     id: 'user-3',
@@ -341,6 +345,8 @@ export const INITIAL_STAFF: StaffUser[] = [
     role: 'cashier',
     status: 'active',
     branch: 'Cửa hàng chính',
+    faceRequired: false,
+    faceRegistered: false,
   },
   {
     id: 'user-4',
@@ -350,6 +356,8 @@ export const INITIAL_STAFF: StaffUser[] = [
     role: 'cashier',
     status: 'active',
     branch: 'Cửa hàng chính',
+    faceRequired: false,
+    faceRegistered: false,
   },
   {
     id: 'user-5',
@@ -359,6 +367,8 @@ export const INITIAL_STAFF: StaffUser[] = [
     role: 'inventory_staff',
     status: 'active',
     branch: 'Cửa hàng chính',
+    faceRequired: false,
+    faceRegistered: false,
   },
 ];
 
