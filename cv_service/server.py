@@ -140,6 +140,17 @@ def verify_face(req: VerifyRequest):
         if v.get("email", "").lower() == clean_email:
             target_key = k
             break
+        aliases = [a.lower() for a in v.get("aliases", [])]
+        if clean_email and clean_email in aliases:
+            target_key = k
+            break
+
+    # Hỗ trợ alias email trực tiếp cho Thân Phú Cường và Nguyễn Tất Phi
+    if not target_key and clean_email:
+        if clean_email in ["thancuong12399@gmail.com", "cuong.than@smartsale.ai"] and "thanphucuong" in db:
+            target_key = "thanphucuong"
+        elif clean_email in ["nguyentatphi136@gmail.com"] and "nguyentatphi" in db:
+            target_key = "nguyentatphi"
 
     # Nếu không thấy theo email, tìm theo role
     if not target_key and clean_role:
@@ -313,6 +324,17 @@ def track_face(req: VerifyRequest):
             if v.get("email", "").lower() == clean_email:
                 target_key = k
                 break
+            aliases = [a.lower() for a in v.get("aliases", [])]
+            if clean_email in aliases:
+                target_key = k
+                break
+
+    if not target_key and clean_email:
+        if clean_email in ["thancuong12399@gmail.com", "cuong.than@smartsale.ai"] and "thanphucuong" in db:
+            target_key = "thanphucuong"
+        elif clean_email in ["nguyentatphi136@gmail.com"] and "nguyentatphi" in db:
+            target_key = "nguyentatphi"
+
     if not target_key and clean_role:
         if clean_role == "admin" and "nguyentatphi" in db:
             target_key = "nguyentatphi"

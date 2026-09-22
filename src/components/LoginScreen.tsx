@@ -18,8 +18,8 @@ import {
   Scan,
 } from 'lucide-react';
 import { StaffUser } from '../types';
-import { INITIAL_STAFF } from '../data/initialData';
 import { FaceAuthModal } from './FaceAuthModal';
+import { ErrorBoundary } from './ErrorBoundary';
 
 interface LoginScreenProps {
   onLoginSuccess: (user: StaffUser) => void;
@@ -506,18 +506,28 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
       </div>
 
       {/* Modal Quét Khuôn mặt Face ID */}
-      <FaceAuthModal
-        isOpen={isFaceModalOpen}
-        user={pendingFaceUser}
-        tempToken={tempToken}
-        onSuccess={handleFaceSuccess}
-        onCancel={() => {
+      <ErrorBoundary
+        fallbackTitle="Lỗi kích hoạt Camera Face ID"
+        fallbackMessage="Trình duyệt hoặc phần cứng camera trên thiết bị này không phản hồi. Bạn có thể thử lại hoặc làm mới trang."
+        onReset={() => {
           setIsFaceModalOpen(false);
           setPendingFaceUser(null);
           setTempToken('');
         }}
-        isDark={isDark}
-      />
+      >
+        <FaceAuthModal
+          isOpen={isFaceModalOpen}
+          user={pendingFaceUser}
+          tempToken={tempToken}
+          onSuccess={handleFaceSuccess}
+          onCancel={() => {
+            setIsFaceModalOpen(false);
+            setPendingFaceUser(null);
+            setTempToken('');
+          }}
+          isDark={isDark}
+        />
+      </ErrorBoundary>
     </div>
   );
 };

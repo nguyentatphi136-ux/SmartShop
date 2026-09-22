@@ -58,7 +58,7 @@ import {
   RolePermissionsMatrix,
   RoleType,
 } from './utils/permissions';
-import { ShieldAlert, Lock, ArrowLeft, ArrowRight, UserCheck, Shield } from 'lucide-react';
+import { ShieldAlert, Lock, ArrowLeft, ArrowRight, UserCheck, Shield, Bot, RefreshCw } from 'lucide-react';
 
 const INITIAL_ACTIVITIES: RealtimeActivity[] = [
   {
@@ -383,25 +383,42 @@ export function App() {
   const [isAuthChecking, setIsAuthChecking] = useState(true);
 
   useEffect(() => {
+    const safetyTimer = setTimeout(() => {
+      setIsAuthChecking(false);
+    }, 3500);
+
     const token = localStorage.getItem('smartsale_session_token');
     if (!token) {
+      clearTimeout(safetyTimer);
       setIsAuthChecking(false);
       return;
     }
 
-    fetch('/api/auth/session', { headers: { Authorization: `Bearer ${token}` } })
+    fetch('/api/auth/session', {
+      headers: { Authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(3000),
+    })
       .then(async (response) => {
         if (!response.ok) throw new Error('Session expired');
         const data = await response.json();
-        setCurrentUser(data.user);
-        localStorage.setItem('smartsale_auth_user', JSON.stringify(data.user));
+        if (data.user) {
+          setCurrentUser(data.user);
+          localStorage.setItem('smartsale_auth_user', JSON.stringify(data.user));
+        } else {
+          throw new Error('User not found');
+        }
       })
       .catch(() => {
         localStorage.removeItem('smartsale_session_token');
         localStorage.removeItem('smartsale_auth_user');
         setCurrentUser(null);
       })
-      .finally(() => setIsAuthChecking(false));
+      .finally(() => {
+        clearTimeout(safetyTimer);
+        setIsAuthChecking(false);
+      });
+
+    return () => clearTimeout(safetyTimer);
   }, []);
 
   useEffect(() => {
@@ -1050,7 +1067,27 @@ export function App() {
 
   // Authentication check: If user is not logged in, render LoginScreen with Email & OTP verification
   if (isAuthChecking) {
-    return <div className="min-h-screen bg-slate-50 dark:bg-slate-950" />;
+    return (
+      <div
+        className={`min-h-screen flex flex-col items-center justify-center p-4 transition-colors ${
+          isDark ? 'bg-slate-950 text-slate-100' : 'bg-slate-50 text-slate-900'
+        }`}
+      >
+        <div className="flex flex-col items-center gap-4 text-center max-w-sm animate-in fade-in duration-300">
+          <div className="relative flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-to-tr from-blue-600 to-indigo-600 text-white shadow-xl shadow-blue-500/25">
+            <Bot className="w-8 h-8 animate-pulse" />
+            <div className="absolute -inset-1 rounded-2xl border border-blue-400/30 animate-ping pointer-events-none" />
+          </div>
+          <div>
+            <h2 className="text-base font-bold tracking-tight">SmartSale AI</h2>
+            <p className="text-xs text-slate-500 dark:text-slate-400 mt-1.5 flex items-center justify-center gap-2">
+              <RefreshCw className="w-3.5 h-3.5 animate-spin text-blue-500" />
+              <span>Đang kiểm tra bảo mật phiên đăng nhập...</span>
+            </p>
+          </div>
+        </div>
+      </div>
+    );
   }
 
   if (!currentUser) {

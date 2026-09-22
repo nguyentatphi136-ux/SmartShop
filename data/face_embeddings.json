@@ -525,6 +525,9 @@
     "display_name": "Thân Phú Cường (Quản lý)",
     "role": "manager",
     "email": "cuong.than@smartsale.ai",
+    "aliases": [
+      "thancuong12399@gmail.com"
+    ],
     "sample_count": 19,
     "embedding": [
       0.043708693236112595,

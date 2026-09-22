@@ -155,17 +155,18 @@ export const FaceAuthModal: React.FC<FaceAuthModalProps> = ({
   };
 
   // Vẽ Bounding Box & Bảng Tên người ngay bên cạnh khuôn mặt (Hỗ trợ ĐA KHUÔN MẶT đồng thời)
+  // Vẽ Bounding Box & Bảng Tên người ngay bên cạnh khuôn mặt (Hỗ trợ ĐA KHUÔN MẶT đồng thời)
   const drawFaceOverlay = useCallback((track: TrackInfo) => {
-    const canvas = overlayCanvasRef.current;
-    const video = videoRef.current;
-    if (!canvas || !video || !track.hasFace) {
-      clearOverlay();
-      return;
-    }
+    try {
+      const canvas = overlayCanvasRef.current;
+      const video = videoRef.current;
+      if (!canvas || !video || !track || !track.hasFace) {
+        clearOverlay();
+        return;
+      }
 
-    // Danh sách tất cả khuôn mặt phát hiện được
-    const faces: DetectedFaceItem[] =
-      track.faces && track.faces.length > 0
+      // Danh sách tất cả khuôn mặt phát hiện được
+      const rawFaces = track.faces && Array.isArray(track.faces) && track.faces.length > 0
         ? track.faces
         : track.box
         ? [
@@ -175,8 +176,8 @@ export const FaceAuthModal: React.FC<FaceAuthModalProps> = ({
               key: 'unknown',
               isKnown: !!track.isKnown,
               isTarget: !!track.isTarget,
-              similarityPercent: track.similarityPercent || 0,
-              cosineSimilarity: track.cosineSimilarity || 0,
+              similarityPercent: Number(track.similarityPercent) || 0,
+              cosineSimilarity: Number(track.cosineSimilarity) || 0,
               box: track.box,
               landmarks: track.landmarks || [],
               detectionProb: 1.0,
@@ -184,186 +185,221 @@ export const FaceAuthModal: React.FC<FaceAuthModalProps> = ({
           ]
         : [];
 
-    if (faces.length === 0) {
-      clearOverlay();
-      return;
-    }
+      const faces = rawFaces.filter(
+        (f): f is DetectedFaceItem => Boolean(f && typeof f === 'object' && Array.isArray(f.box) && f.box.length >= 4)
+      );
 
-    canvas.width = video.clientWidth || 640;
-    canvas.height = video.clientHeight || 480;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
+      if (faces.length === 0) {
+        clearOverlay();
+        return;
+      }
 
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
+      const vW = video.clientWidth || video.videoWidth || 640;
+      const vH = video.clientHeight || video.videoHeight || 480;
+      if (!Number.isFinite(vW) || !Number.isFinite(vH) || vW <= 0 || vH <= 0) {
+        clearOverlay();
+        return;
+      }
 
-    const imgW = track.imgWidth || 640;
-    const imgH = track.imgHeight || 480;
-    const scaleX = canvas.width / imgW;
-    const scaleY = canvas.height / imgH;
+      canvas.width = vW;
+      canvas.height = vH;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
 
-    // Lặp qua từng khuôn mặt để vẽ Bounding Box, 5 Landmarks và Bảng Tên nổi
-    faces.forEach((face, index) => {
-      if (!face.box) return;
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-      // Toạ độ lật ngang (vì camera soi gương)
-      const rawBox = face.box;
-      const x1 = Math.max(4, (imgW - rawBox[2]) * scaleX);
-      const x2 = Math.min(canvas.width - 4, (imgW - rawBox[0]) * scaleX);
-      const y1 = Math.max(4, rawBox[1] * scaleY);
-      const y2 = Math.min(canvas.height - 4, rawBox[3] * scaleY);
-      const boxW = x2 - x1;
-      const boxH = y2 - y1;
+      const imgW = track.imgWidth && Number.isFinite(track.imgWidth) && track.imgWidth > 0 ? track.imgWidth : 640;
+      const imgH = track.imgHeight && Number.isFinite(track.imgHeight) && track.imgHeight > 0 ? track.imgHeight : 480;
+      const scaleX = canvas.width / imgW;
+      const scaleY = canvas.height / imgH;
 
-      // Màu sắc theo trạng thái nhận diện:
-      // - Xanh lá (#10b981): Đúng tài khoản đang đăng nhập (isTarget)
-      // - Vàng cam (#f59e0b): Người quen trong hệ thống (Chủ quán/Quản lý) nhưng không phải tài khoản này
-      // - Đỏ neon (#ef4444): Người lạ / Chưa đăng ký trong hệ thống
-      const isTargetMatch = face.isTarget;
-      const isKnownUser = face.isKnown;
+      if (!Number.isFinite(scaleX) || !Number.isFinite(scaleY) || scaleX <= 0 || scaleY <= 0) {
+        return;
+      }
 
-      const strokeColor = isTargetMatch
-        ? '#10b981'
-        : isKnownUser
-        ? '#f59e0b'
-        : '#ef4444';
-      const glowColor = isTargetMatch
-        ? 'rgba(16, 185, 129, 0.45)'
-        : isKnownUser
-        ? 'rgba(245, 158, 11, 0.45)'
-        : 'rgba(239, 68, 68, 0.45)';
+      // Lặp qua từng khuôn mặt để vẽ Bounding Box, 5 Landmarks và Bảng Tên nổi
+      faces.forEach((face, index) => {
+        try {
+          if (!face.box || !Array.isArray(face.box) || face.box.length < 4) return;
+          const rawBox = face.box;
+          if (!rawBox.every(Number.isFinite)) return;
 
-      // 1. Vẽ khung Bounding Box kiểu High-Tech (4 góc vuông neon)
-      ctx.save();
-      ctx.strokeStyle = strokeColor;
-      ctx.lineWidth = 2.5;
-      ctx.shadowColor = strokeColor;
-      ctx.shadowBlur = 10;
+          const minX = Math.min(rawBox[0], rawBox[2]);
+          const maxX = Math.max(rawBox[0], rawBox[2]);
+          const minY = Math.min(rawBox[1], rawBox[3]);
+          const maxY = Math.max(rawBox[1], rawBox[3]);
 
-      const cornerLen = Math.min(22, boxW * 0.25);
-      // Góc trên trái
-      ctx.beginPath();
-      ctx.moveTo(x1, y1 + cornerLen);
-      ctx.lineTo(x1, y1);
-      ctx.lineTo(x1 + cornerLen, y1);
-      ctx.stroke();
+          // Toạ độ lật ngang (vì camera soi gương)
+          const x1 = Math.max(4, (imgW - maxX) * scaleX);
+          const x2 = Math.min(canvas.width - 4, (imgW - minX) * scaleX);
+          const y1 = Math.max(4, minY * scaleY);
+          const y2 = Math.min(canvas.height - 4, maxY * scaleY);
 
-      // Góc trên phải
-      ctx.beginPath();
-      ctx.moveTo(x2 - cornerLen, y1);
-      ctx.lineTo(x2, y1);
-      ctx.lineTo(x2, y1 + cornerLen);
-      ctx.stroke();
+          if (!Number.isFinite(x1) || !Number.isFinite(x2) || !Number.isFinite(y1) || !Number.isFinite(y2) || x2 <= x1 || y2 <= y1) {
+            return;
+          }
 
-      // Góc dưới trái
-      ctx.beginPath();
-      ctx.moveTo(x1, y2 - cornerLen);
-      ctx.lineTo(x1, y2);
-      ctx.lineTo(x1 + cornerLen, y2);
-      ctx.stroke();
+          const boxW = x2 - x1;
+          const boxH = y2 - y1;
 
-      // Góc dưới phải
-      ctx.beginPath();
-      ctx.moveTo(x2 - cornerLen, y2);
-      ctx.lineTo(x2, y2);
-      ctx.lineTo(x2, y2 - cornerLen);
-      ctx.stroke();
+          const isTargetMatch = !!face.isTarget;
+          const isKnownUser = !!face.isKnown;
 
-      // Viền mỏng toàn hộp
-      ctx.strokeStyle = glowColor;
-      ctx.lineWidth = 1;
-      ctx.strokeRect(x1, y1, boxW, boxH);
-      ctx.restore();
+          const strokeColor = isTargetMatch
+            ? '#10b981'
+            : isKnownUser
+            ? '#f59e0b'
+            : '#ef4444';
+          const glowColor = isTargetMatch
+            ? 'rgba(16, 185, 129, 0.45)'
+            : isKnownUser
+            ? 'rgba(245, 158, 11, 0.45)'
+            : 'rgba(239, 68, 68, 0.45)';
 
-      // 2. Vẽ 5 điểm Landmarks (Mắt, Mũi, Khóe miệng) từ MTCNN
-      if (face.landmarks && Array.isArray(face.landmarks)) {
-        ctx.save();
-        ctx.fillStyle = isTargetMatch ? '#34d399' : isKnownUser ? '#38bdf8' : '#f87171';
-        ctx.shadowColor = ctx.fillStyle;
-        ctx.shadowBlur = 6;
-        face.landmarks.forEach((pt) => {
-          const lx = (imgW - pt[0]) * scaleX;
-          const ly = pt[1] * scaleY;
+          // 1. Vẽ khung Bounding Box kiểu High-Tech (4 góc vuông neon)
+          ctx.save();
+          ctx.strokeStyle = strokeColor;
+          ctx.lineWidth = 2.5;
+          ctx.shadowColor = strokeColor;
+          ctx.shadowBlur = 10;
+
+          const cornerLen = Math.max(6, Math.min(22, boxW * 0.25));
+          // Góc trên trái
           ctx.beginPath();
-          ctx.arc(lx, ly, 3, 0, 2 * Math.PI);
+          ctx.moveTo(x1, y1 + cornerLen);
+          ctx.lineTo(x1, y1);
+          ctx.lineTo(x1 + cornerLen, y1);
+          ctx.stroke();
+
+          // Góc trên phải
+          ctx.beginPath();
+          ctx.moveTo(x2 - cornerLen, y1);
+          ctx.lineTo(x2, y1);
+          ctx.lineTo(x2, y1 + cornerLen);
+          ctx.stroke();
+
+          // Góc dưới trái
+          ctx.beginPath();
+          ctx.moveTo(x1, y2 - cornerLen);
+          ctx.lineTo(x1, y2);
+          ctx.lineTo(x1 + cornerLen, y2);
+          ctx.stroke();
+
+          // Góc dưới phải
+          ctx.beginPath();
+          ctx.moveTo(x2 - cornerLen, y2);
+          ctx.lineTo(x2, y2);
+          ctx.lineTo(x2, y2 - cornerLen);
+          ctx.stroke();
+
+          // Viền mỏng toàn hộp
+          ctx.strokeStyle = glowColor;
+          ctx.lineWidth = 1;
+          ctx.strokeRect(x1, y1, boxW, boxH);
+          ctx.restore();
+
+          // 2. Vẽ 5 điểm Landmarks (Mắt, Mũi, Khóe miệng) từ MTCNN
+          if (face.landmarks && Array.isArray(face.landmarks)) {
+            ctx.save();
+            ctx.fillStyle = isTargetMatch ? '#34d399' : isKnownUser ? '#38bdf8' : '#f87171';
+            ctx.shadowColor = ctx.fillStyle;
+            ctx.shadowBlur = 6;
+            face.landmarks.forEach((pt) => {
+              if (Array.isArray(pt) && pt.length >= 2 && Number.isFinite(pt[0]) && Number.isFinite(pt[1])) {
+                const lx = (imgW - pt[0]) * scaleX;
+                const ly = pt[1] * scaleY;
+                if (Number.isFinite(lx) && Number.isFinite(ly)) {
+                  ctx.beginPath();
+                  ctx.arc(lx, ly, 3, 0, 2 * Math.PI);
+                  ctx.fill();
+                }
+              }
+            });
+            ctx.restore();
+          }
+
+          // 3. VẼ BẢNG TÊN NGAY BÊN CẠNH KHUÔN MẶT (FLOATING NAME BADGE)
+          const displayName = String(isKnownUser ? face.name || 'Người quen' : 'Người lạ');
+          const percentText = `${Math.round(Number(face.similarityPercent) || 0)}%`;
+          const roleText =
+            face.role === 'admin'
+              ? 'Chủ cửa hàng'
+              : face.role === 'manager'
+              ? 'Quản lý'
+              : 'Chưa đăng ký';
+
+          ctx.save();
+          ctx.font = 'bold 12px system-ui, -apple-system, sans-serif';
+          const nameWidth = ctx.measureText(displayName).width || 60;
+          ctx.font = '10px system-ui, -apple-system, sans-serif';
+          const subWidth = ctx.measureText(`${roleText} • ${percentText}`).width || 80;
+          const badgeW = Math.max(130, Math.min(canvas.width - 16, Math.max(nameWidth, subWidth) + 38));
+          const badgeH = 44;
+
+          // Ưu tiên đặt BÊN PHẢI khuôn mặt nếu còn đủ chỗ, nếu không thì đặt PHÍA TRÊN hoặc BÊN DƯỚI
+          let tagX = x2 + 10;
+          let tagY = y1;
+          if (tagX + badgeW > canvas.width - 8) {
+            tagX = Math.max(8, Math.min(x1, canvas.width - badgeW - 8));
+            tagY = y1 >= badgeH + 8 ? y1 - badgeH - 8 : y2 + 8;
+          }
+          if (tagY < 4) tagY = 4;
+          if (tagY + badgeH > canvas.height - 4) tagY = Math.max(4, canvas.height - badgeH - 4);
+
+          // Nền thẻ tên (Dark Glassmorphism)
+          ctx.fillStyle = 'rgba(15, 23, 42, 0.92)';
+          ctx.strokeStyle = strokeColor;
+          ctx.lineWidth = 1.5;
+          ctx.shadowColor = strokeColor;
+          ctx.shadowBlur = 8;
+
+          const r = 8;
+          ctx.beginPath();
+          ctx.moveTo(tagX + r, tagY);
+          ctx.lineTo(tagX + badgeW - r, tagY);
+          ctx.quadraticCurveTo(tagX + badgeW, tagY, tagX + badgeW, tagY + r);
+          ctx.lineTo(tagX + badgeW, tagY + badgeH - r);
+          ctx.quadraticCurveTo(tagX + badgeW, tagY + badgeH, tagX + badgeW - r, tagY + badgeH);
+          ctx.lineTo(tagX + r, tagY + badgeH);
+          ctx.quadraticCurveTo(tagX, tagY + badgeH, tagX, tagY + badgeH - r);
+          ctx.lineTo(tagX, tagY + r);
+          ctx.quadraticCurveTo(tagX, tagY, tagX + r, tagY);
+          ctx.closePath();
           ctx.fill();
-        });
-        ctx.restore();
-      }
+          ctx.stroke();
 
-      // 3. VẼ BẢNG TÊN NGAY BÊN CẠNH KHUÔN MẶT (FLOATING NAME BADGE)
-      const displayName = isKnownUser ? face.name : 'Người lạ';
-      const percentText = `${face.similarityPercent || 0}%`;
-      const roleText =
-        face.role === 'admin'
-          ? 'Chủ cửa hàng'
-          : face.role === 'manager'
-          ? 'Quản lý'
-          : 'Chưa đăng ký';
+          // Biểu tượng chấm tròn trạng thái (Status Dot)
+          ctx.shadowBlur = 0;
+          ctx.fillStyle = strokeColor;
+          ctx.beginPath();
+          ctx.arc(tagX + 14, tagY + 16, 4.5, 0, 2 * Math.PI);
+          ctx.fill();
 
-      ctx.save();
-      ctx.font = 'bold 12px system-ui, -apple-system, sans-serif';
-      const nameWidth = ctx.measureText(displayName).width;
-      ctx.font = '10px system-ui, -apple-system, sans-serif';
-      const subWidth = ctx.measureText(`${roleText} • ${percentText}`).width;
-      const badgeW = Math.max(140, Math.max(nameWidth, subWidth) + 38);
-      const badgeH = 44;
+          // Số thứ tự nếu có từ 2 khuôn mặt trở lên
+          if (faces.length > 1) {
+            ctx.fillStyle = '#94a3b8';
+            ctx.font = 'bold 9px monospace';
+            ctx.fillText(`#${index + 1}`, tagX + badgeW - 20, tagY + 15);
+          }
 
-      // Ưu tiên đặt BÊN PHẢI khuôn mặt nếu còn đủ chỗ, nếu không thì đặt PHÍA TRÊN hoặc BÊN DƯỚI
-      let tagX = x2 + 10;
-      let tagY = y1;
-      if (tagX + badgeW > canvas.width - 8) {
-        tagX = Math.max(8, Math.min(x1, canvas.width - badgeW - 8));
-        tagY = y1 >= badgeH + 8 ? y1 - badgeH - 8 : y2 + 8;
-      }
+          // Dòng 1: Tên người (Trắng đậm)
+          ctx.fillStyle = '#ffffff';
+          ctx.font = 'bold 12px system-ui, -apple-system, sans-serif';
+          ctx.fillText(displayName, tagX + 24, tagY + 18);
 
-      // Nền thẻ tên (Dark Glassmorphism)
-      ctx.fillStyle = 'rgba(15, 23, 42, 0.92)';
-      ctx.strokeStyle = strokeColor;
-      ctx.lineWidth = 1.5;
-      ctx.shadowColor = strokeColor;
-      ctx.shadowBlur = 8;
+          // Dòng 2: Vai trò & % Tương đồng
+          ctx.fillStyle = isTargetMatch ? '#6ee7b7' : isKnownUser ? '#fde68a' : '#fca5a5';
+          ctx.font = '500 10px system-ui, -apple-system, sans-serif';
+          ctx.fillText(isKnownUser ? `${roleText} • ${percentText}` : `Người lạ • ${percentText}`, tagX + 24, tagY + 33);
 
-      const r = 8;
-      ctx.beginPath();
-      ctx.moveTo(tagX + r, tagY);
-      ctx.lineTo(tagX + badgeW - r, tagY);
-      ctx.quadraticCurveTo(tagX + badgeW, tagY, tagX + badgeW, tagY + r);
-      ctx.lineTo(tagX + badgeW, tagY + badgeH - r);
-      ctx.quadraticCurveTo(tagX + badgeW, tagY + badgeH, tagX + badgeW - r, tagY + badgeH);
-      ctx.lineTo(tagX + r, tagY + badgeH);
-      ctx.quadraticCurveTo(tagX, tagY + badgeH, tagX, tagY + badgeH - r);
-      ctx.lineTo(tagX, tagY + r);
-      ctx.quadraticCurveTo(tagX, tagY, tagX + r, tagY);
-      ctx.closePath();
-      ctx.fill();
-      ctx.stroke();
-
-      // Biểu tượng chấm tròn trạng thái (Status Dot)
-      ctx.shadowBlur = 0;
-      ctx.fillStyle = strokeColor;
-      ctx.beginPath();
-      ctx.arc(tagX + 14, tagY + 16, 4.5, 0, 2 * Math.PI);
-      ctx.fill();
-
-      // Số thứ tự nếu có từ 2 khuôn mặt trở lên
-      if (faces.length > 1) {
-        ctx.fillStyle = '#94a3b8';
-        ctx.font = 'bold 9px monospace';
-        ctx.fillText(`#${index + 1}`, tagX + badgeW - 20, tagY + 15);
-      }
-
-      // Dòng 1: Tên người (Trắng đậm)
-      ctx.fillStyle = '#ffffff';
-      ctx.font = 'bold 12px system-ui, -apple-system, sans-serif';
-      ctx.fillText(displayName, tagX + 24, tagY + 18);
-
-      // Dòng 2: Vai trò & % Tương đồng
-      ctx.fillStyle = isTargetMatch ? '#6ee7b7' : isKnownUser ? '#fde68a' : '#fca5a5';
-      ctx.font = '500 10px system-ui, -apple-system, sans-serif';
-      ctx.fillText(isKnownUser ? `${roleText} • ${percentText}` : `Người lạ • ${percentText}`, tagX + 24, tagY + 33);
-
-      ctx.restore();
-    });
+          ctx.restore();
+        } catch (faceErr) {
+          console.error('[FaceAuthModal] Error drawing single face:', faceErr);
+        }
+      });
+    } catch (overlayErr) {
+      console.error('[FaceAuthModal] Error in drawFaceOverlay:', overlayErr);
+    }
   }, []);
 
   // Vòng lặp Real-time Live Tracking gửi frame nhẹ (~300ms/lần)
@@ -432,11 +468,16 @@ export const FaceAuthModal: React.FC<FaceAuthModalProps> = ({
   // Xác thực chính thức khi người dùng bấm nút
   const handleCaptureAndVerify = async () => {
     if (!videoRef.current || !captureCanvasRef.current || !user) return;
+    const video = videoRef.current;
+    if (video.readyState < 2 || !video.videoWidth || !video.videoHeight) {
+      setErrorMessage('Camera đang khởi động hoặc chưa nhận diện được khung hình. Vui lòng thử lại sau giây lát.');
+      return;
+    }
+
     setIsScanning(true);
     setErrorMessage(null);
 
     try {
-      const video = videoRef.current;
       const canvas = captureCanvasRef.current;
       canvas.width = video.videoWidth || 640;
       canvas.height = video.videoHeight || 480;
@@ -444,9 +485,11 @@ export const FaceAuthModal: React.FC<FaceAuthModalProps> = ({
       if (!ctx) throw new Error('Không thể khởi tạo bộ xử lý Canvas.');
 
       // Lật ảnh gương
+      ctx.save();
       ctx.translate(canvas.width, 0);
       ctx.scale(-1, 1);
       ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      ctx.restore();
 
       const imageBase64 = canvas.toDataURL('image/jpeg', 0.92);
 
@@ -458,9 +501,10 @@ export const FaceAuthModal: React.FC<FaceAuthModalProps> = ({
           email: user.email,
           image: imageBase64,
         }),
+        signal: AbortSignal.timeout(12000),
       });
 
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
 
       if (!res.ok || !data.success) {
         setScanResult({
@@ -472,6 +516,10 @@ export const FaceAuthModal: React.FC<FaceAuthModalProps> = ({
         });
         setErrorMessage(data.error || 'Xác thực khuôn mặt thất bại. Vui lòng thử lại.');
       } else {
+        if (!data.user) {
+          throw new Error('Máy chủ không trả về thông tin tài khoản hợp lệ.');
+        }
+
         setScanResult({
           matched: true,
           message: data.message || 'Xác thực khuôn mặt thành công!',
@@ -482,11 +530,15 @@ export const FaceAuthModal: React.FC<FaceAuthModalProps> = ({
 
         setTimeout(() => {
           stopCamera();
-          onSuccess(data.user, data.sessionToken);
-        }, 1000);
+          try {
+            onSuccess(data.user, data.sessionToken || '');
+          } catch (callbackErr) {
+            console.error('[FaceAuthModal] Error in onSuccess callback:', callbackErr);
+          }
+        }, 900);
       }
     } catch (err: any) {
-      setErrorMessage(err.message || 'Lỗi kết nối tới máy chủ nhận diện khuôn mặt.');
+      setErrorMessage(err.name === 'TimeoutError' ? 'Thời gian đối chiếu khuôn mặt quá hạn. Vui lòng thử lại.' : (err.message || 'Lỗi kết nối tới máy chủ nhận diện khuôn mặt.'));
     } finally {
       setIsScanning(false);
     }
@@ -592,18 +644,21 @@ export const FaceAuthModal: React.FC<FaceAuthModalProps> = ({
                     />
                     <span className="truncate">
                       {liveTrack?.hasFace
-                        ? liveTrack.faceCount && liveTrack.faceCount > 1
-                          ? `👥 Đã thấy ${liveTrack.faceCount} khuôn mặt: ${liveTrack.faces?.map((f) => (f.isKnown ? f.name : 'Người lạ')).join(', ')}`
-                          : `Đã phát hiện: ${liveTrack.name}`
+                        ? liveTrack.faces && Array.isArray(liveTrack.faces) && liveTrack.faces.length > 1
+                          ? `👥 Đã thấy ${liveTrack.faces.length} khuôn mặt: ${liveTrack.faces
+                              .filter(Boolean)
+                              .map((f) => (f?.isKnown ? f?.name || 'Nhân sự' : 'Người lạ'))
+                              .join(', ')}`
+                          : `Đã phát hiện: ${liveTrack.name || 'Khuôn mặt'}`
                         : 'Đang đợi khuôn mặt trước camera...'}
                     </span>
                   </div>
 
                   {liveTrack?.hasFace && (
                     <div className="px-2.5 py-1 rounded-full bg-slate-900/85 backdrop-blur-md border border-slate-700 text-[11px] font-mono font-bold text-white shadow flex-shrink-0">
-                      {liveTrack.faceCount && liveTrack.faceCount > 1
-                        ? `${liveTrack.faceCount} người`
-                        : `${liveTrack.similarityPercent}%`}
+                      {liveTrack.faces && Array.isArray(liveTrack.faces) && liveTrack.faces.length > 1
+                        ? `${liveTrack.faces.length} người`
+                        : `${Math.round(Number(liveTrack.similarityPercent) || 0)}%`}
                     </div>
                   )}
                 </div>
@@ -633,7 +688,7 @@ export const FaceAuthModal: React.FC<FaceAuthModalProps> = ({
           {/* Real-time Recognition Banner (Multi-Face list or Single) */}
           {liveTrack?.hasFace && (
             <div className="space-y-2">
-              {liveTrack.faces && liveTrack.faces.length > 1 ? (
+              {liveTrack.faces && Array.isArray(liveTrack.faces) && liveTrack.faces.length > 1 ? (
                 /* Multi-face list banner */
                 <div className="p-3 rounded-2xl border bg-slate-50 dark:bg-slate-900/60 border-slate-200 dark:border-slate-800 text-xs space-y-2">
                   <div className="flex items-center justify-between font-bold text-slate-700 dark:text-slate-200">
@@ -648,39 +703,47 @@ export const FaceAuthModal: React.FC<FaceAuthModalProps> = ({
                     )}
                   </div>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                    {liveTrack.faces.map((f, idx) => (
-                      <div
-                        key={idx}
-                        className={`p-2 rounded-xl border flex items-center justify-between ${
-                          f.isTarget
-                            ? 'bg-emerald-50 dark:bg-emerald-950/40 border-emerald-300 dark:border-emerald-800 text-emerald-800 dark:text-emerald-200'
-                            : f.isKnown
-                            ? 'bg-amber-50 dark:bg-amber-950/40 border-amber-300 dark:border-amber-800 text-amber-800 dark:text-amber-200'
-                            : 'bg-rose-50 dark:bg-rose-950/40 border-rose-300 dark:border-rose-800 text-rose-800 dark:text-rose-200'
-                        }`}
-                      >
-                        <div className="flex items-center gap-1.5 truncate">
-                          <span className="w-4 h-4 rounded-full bg-slate-900/10 dark:bg-slate-100/10 text-[10px] font-mono font-bold flex items-center justify-center flex-shrink-0">
-                            {idx + 1}
-                          </span>
-                          <div className="truncate">
-                            <p className="font-bold truncate text-[11px]">{f.name}</p>
-                            <p className="text-[10px] opacity-75">
-                              {f.isTarget
-                                ? 'Tài khoản đăng nhập'
-                                : f.isKnown
-                                ? f.role === 'admin'
-                                  ? 'Chủ cửa hàng'
-                                  : 'Quản lý'
-                                : 'Người lạ'}
-                            </p>
+                    {liveTrack.faces
+                      .filter((item): item is DetectedFaceItem => Boolean(item && typeof item === 'object'))
+                      .map((f, idx) => {
+                        const isTarget = !!f?.isTarget;
+                        const isKnown = !!f?.isKnown;
+                        const sim = Math.round(Number(f?.similarityPercent) || 0);
+                        const displayName = f?.name || (isKnown ? 'Nhân sự' : 'Người lạ');
+                        const roleDesc = isTarget
+                          ? 'Tài khoản đăng nhập'
+                          : isKnown
+                          ? f.role === 'admin'
+                            ? 'Chủ cửa hàng'
+                            : 'Quản lý'
+                          : 'Người lạ';
+
+                        return (
+                          <div
+                            key={idx}
+                            className={`p-2 rounded-xl border flex items-center justify-between ${
+                              isTarget
+                                ? 'bg-emerald-50 dark:bg-emerald-950/40 border-emerald-300 dark:border-emerald-800 text-emerald-800 dark:text-emerald-200'
+                                : isKnown
+                                ? 'bg-amber-50 dark:bg-amber-950/40 border-amber-300 dark:border-amber-800 text-amber-800 dark:text-amber-200'
+                                : 'bg-rose-50 dark:bg-rose-950/40 border-rose-300 dark:border-rose-800 text-rose-800 dark:text-rose-200'
+                            }`}
+                          >
+                            <div className="flex items-center gap-1.5 truncate">
+                              <span className="w-4 h-4 rounded-full bg-slate-900/10 dark:bg-slate-100/10 text-[10px] font-mono font-bold flex items-center justify-center flex-shrink-0">
+                                {idx + 1}
+                              </span>
+                              <div className="truncate">
+                                <p className="font-bold truncate text-[11px]">{displayName}</p>
+                                <p className="text-[10px] opacity-75">{roleDesc}</p>
+                              </div>
+                            </div>
+                            <span className="text-[11px] font-mono font-bold px-1.5 py-0.5 rounded-md bg-white/70 dark:bg-slate-900/60 flex-shrink-0 ml-1">
+                              {sim}%
+                            </span>
                           </div>
-                        </div>
-                        <span className="text-[11px] font-mono font-bold px-1.5 py-0.5 rounded-md bg-white/70 dark:bg-slate-900/60 flex-shrink-0 ml-1">
-                          {f.similarityPercent}%
-                        </span>
-                      </div>
-                    ))}
+                        );
+                      })}
                   </div>
                 </div>
               ) : (
@@ -701,7 +764,7 @@ export const FaceAuthModal: React.FC<FaceAuthModalProps> = ({
                       <User className="w-4 h-4 text-amber-600 flex-shrink-0" />
                     )}
                     <div>
-                      <p className="font-bold">{liveTrack.name}</p>
+                      <p className="font-bold">{liveTrack.name || 'Khuôn mặt'}</p>
                       <p className="text-[11px] opacity-80">
                         {liveTrack.isTarget
                           ? 'Khuôn mặt trùng khớp với tài khoản đăng nhập!'
@@ -712,7 +775,7 @@ export const FaceAuthModal: React.FC<FaceAuthModalProps> = ({
                     </div>
                   </div>
                   <span className="text-xs font-mono font-bold px-2.5 py-1 rounded-full bg-white/80 dark:bg-slate-900/60 shadow-sm">
-                    {liveTrack.similarityPercent}%
+                    {Math.round(Number(liveTrack.similarityPercent) || 0)}%
                   </span>
                 </div>
               )}
