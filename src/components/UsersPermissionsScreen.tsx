@@ -123,7 +123,7 @@ export const UsersPermissionsScreen: React.FC<UsersPermissionsScreenProps> = ({
     }
 
     if (newStaffRole === 'admin') {
-      const currentAdmins = staffList.filter((s) => s.role === 'admin').length;
+      const currentAdmins = staffList.filter((s) => s.role === 'admin' && s.id !== 'user-tester' && s.email.toLowerCase() !== 'tester@smartsale.ai').length;
       if (currentAdmins >= 1) {
         setFormError('Hệ thống chỉ cho phép tối đa 1 Chủ cửa hàng.');
         return;
@@ -131,7 +131,7 @@ export const UsersPermissionsScreen: React.FC<UsersPermissionsScreenProps> = ({
     }
 
     if (newStaffRole === 'manager') {
-      const currentManagers = staffList.filter((s) => s.role === 'manager').length;
+      const currentManagers = staffList.filter((s) => s.role === 'manager' && s.id !== 'user-tester' && s.email.toLowerCase() !== 'tester@smartsale.ai').length;
       if (currentManagers >= 2) {
         setFormError('chỉ tạo được 2 quản lý');
         return;
@@ -990,14 +990,14 @@ export const UsersPermissionsScreen: React.FC<UsersPermissionsScreenProps> = ({
                   onClick={() => {
                     if (editingStaff) {
                       if (editingStaff.role === 'admin') {
-                        const otherAdmins = staffList.filter((s) => s.id !== editingStaff.id && s.role === 'admin').length;
+                        const otherAdmins = staffList.filter((s) => s.id !== editingStaff.id && s.role === 'admin' && s.id !== 'user-tester' && s.email.toLowerCase() !== 'tester@smartsale.ai').length;
                         if (otherAdmins >= 1) {
                           alert('Hệ thống chỉ cho phép tối đa 1 Chủ cửa hàng.');
                           return;
                         }
                       }
                       if (editingStaff.role === 'manager') {
-                        const otherManagers = staffList.filter((s) => s.id !== editingStaff.id && s.role === 'manager').length;
+                        const otherManagers = staffList.filter((s) => s.id !== editingStaff.id && s.role === 'manager' && s.id !== 'user-tester' && s.email.toLowerCase() !== 'tester@smartsale.ai').length;
                         if (otherManagers >= 2) {
                           alert('chỉ tạo được 2 quản lý');
                           return;

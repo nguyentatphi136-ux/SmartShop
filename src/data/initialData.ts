@@ -314,7 +314,20 @@ export const INITIAL_RESTOCK_ORDERS: RestockOrder[] = [
   },
 ];
 
+export const TESTER_STAFF_USER: StaffUser = {
+  id: 'user-tester',
+  name: 'Tester (Kiểm thử hệ thống)',
+  email: 'tester@smartsale.ai',
+  phone: '0999 888 999',
+  role: 'admin',
+  status: 'active',
+  branch: 'Cửa hàng chính',
+  faceRequired: false,
+  faceRegistered: false,
+};
+
 export const INITIAL_STAFF: StaffUser[] = [
+  TESTER_STAFF_USER,
   {
     id: 'user-1',
     name: 'Nguyễn Tất Phi (Chủ cửa hàng)',

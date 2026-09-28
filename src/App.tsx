@@ -1300,6 +1300,7 @@ export function App() {
                   <DashboardScreen
                     products={products}
                     orders={orders}
+                    customers={customers}
                     realtimeActivities={realtimeActivities}
                     isAutoStreamActive={isAutoStreamActive}
                     onToggleAutoStream={() => setIsAutoStreamActive(!isAutoStreamActive)}
@@ -1316,6 +1317,7 @@ export function App() {
                     onOpenRealDataManager={() => setIsRealDataModalOpen(true)}
                     isDark={isDark}
                     dataMode={dataMode}
+                    onToggleDataMode={handleSetDataMode}
                   />
                 )}
 
@@ -1640,6 +1642,8 @@ export function App() {
         isOpen={isReportModalOpen}
         onClose={() => setIsReportModalOpen(false)}
         isDark={isDark}
+        orders={orders}
+        products={products}
       />
 
       {/* 6. Upgrade Pro Modal */}

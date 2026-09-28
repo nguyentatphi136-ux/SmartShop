@@ -61,19 +61,31 @@ export const BottomNav: React.FC<BottomNavProps> = ({
             onClick={() => onTabChange(item.id)}
             className={`flex flex-col items-center justify-center flex-1 py-1 px-1 rounded-xl transition-all relative ${
               isActive
-                ? 'text-blue-600 dark:text-blue-400 font-bold'
-                : 'hover:text-slate-800 dark:hover:text-slate-200'
+                ? 'text-slate-900 dark:text-white font-bold'
+                : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200'
             }`}
           >
             <div className="relative">
-              {item.icon}
+              <div
+                className={`w-7 h-7 rounded-lg flex items-center justify-center transition-all ${
+                  isActive
+                    ? isDark
+                      ? 'bg-white text-slate-900 shadow-xs'
+                      : 'bg-slate-900 text-white shadow-xs'
+                    : isDark
+                    ? 'bg-slate-800/80 text-slate-400'
+                    : 'bg-slate-100 text-slate-600'
+                }`}
+              >
+                {item.icon}
+              </div>
               {item.badge !== undefined && (
-                <span className="absolute -top-1.5 -right-2.5 px-1.5 py-0.2 bg-red-500 text-white text-[9px] font-extrabold rounded-full animate-pulse shadow-sm">
+                <span className="absolute -top-1.5 -right-2 px-1.5 py-0.2 bg-rose-600 text-white text-[9px] font-extrabold rounded-full animate-pulse shadow-xs">
                   {item.badge}
                 </span>
               )}
             </div>
-            <span className="text-[10px] mt-1 tracking-tight leading-none whitespace-nowrap">
+            <span className="text-[10px] mt-1 tracking-tight leading-none whitespace-nowrap font-medium">
               {item.label}
             </span>
           </button>
@@ -85,12 +97,24 @@ export const BottomNav: React.FC<BottomNavProps> = ({
         onClick={onOpenMobileMenu}
         className={`flex flex-col items-center justify-center flex-1 py-1 px-1 rounded-xl transition-all ${
           ['customers', 'invoices', 'inventory', 'revenue-report', 'analytics-report', 'ai-analyst', 'users-permissions'].includes(currentTab)
-            ? 'text-blue-600 dark:text-blue-400 font-bold'
-            : 'hover:text-slate-800 dark:hover:text-slate-200'
+            ? 'text-slate-900 dark:text-white font-bold'
+            : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200'
         }`}
       >
-        <Menu className="w-5 h-5" />
-        <span className="text-[10px] mt-1 tracking-tight leading-none whitespace-nowrap">
+        <div
+          className={`w-7 h-7 rounded-lg flex items-center justify-center transition-all ${
+            ['customers', 'invoices', 'inventory', 'revenue-report', 'analytics-report', 'ai-analyst', 'users-permissions'].includes(currentTab)
+              ? isDark
+                ? 'bg-white text-slate-900 shadow-xs'
+                : 'bg-slate-900 text-white shadow-xs'
+              : isDark
+              ? 'bg-slate-800/80 text-slate-400'
+              : 'bg-slate-100 text-slate-600'
+          }`}
+        >
+          <Menu className="w-4 h-4" />
+        </div>
+        <span className="text-[10px] mt-1 tracking-tight leading-none whitespace-nowrap font-medium">
           {language === 'vi' ? 'Danh mục' : 'Menu'}
         </span>
       </button>

@@ -374,6 +374,22 @@ async function startServer() {
       return res.status(403).json({ error: "Email không thuộc tài khoản nhân sự đang hoạt động." });
     }
 
+    // TÀI KHOẢN TESTER: Tự động cấp mã 123456 không cần gửi email
+    const isTester = staff.id === "user-tester" || email === "tester@smartsale.ai";
+    if (isTester) {
+      const code = "123456";
+      const expiresAt = Date.now() + 24 * 60 * 60 * 1000;
+      verificationStore.set(email, { email, code, expiresAt, attempts: 0 });
+      return res.json({
+        success: true,
+        message: "Tài khoản Tester: Mã xác thực là 123456 (Bỏ qua Face ID)",
+        email,
+        expiresInSeconds: 86400,
+        devCode: code,
+        isTester: true,
+      });
+    }
+
     const code = randomInt(100000, 1000000).toString();
     const expiresAt = Date.now() + 5 * 60 * 1000; // 5 minutes validity
 
@@ -440,6 +456,35 @@ async function startServer() {
     });
   });
 
+  // Quick 1-Click Tester Login (Bypasses OTP and Face ID completely)
+  app.post("/api/auth/quick-tester-login", (req, res) => {
+    const staff = getStoreState().staffList.find(
+      (candidate) => candidate.id === "user-tester" || candidate.email.toLowerCase() === "tester@smartsale.ai"
+    );
+    if (!staff || staff.status !== "active") {
+      return res.status(404).json({ error: "Không tìm thấy tài khoản Tester." });
+    }
+
+    const sessionToken = randomBytes(32).toString("hex");
+    const expiresAt = Date.now() + 30 * 24 * 60 * 60 * 1000; // 30 days validity
+    createStoreSession(
+      sessionToken,
+      staff.email,
+      expiresAt,
+      typeof req.headers['user-agent'] === 'string' ? req.headers['user-agent'] : undefined,
+      req.ip
+    );
+
+    res.json({
+      success: true,
+      requireFace: false,
+      message: "Đăng nhập Tester thành công! Bỏ qua xác thực OTP và Face ID.",
+      email: staff.email,
+      sessionToken,
+      user: staff,
+    });
+  });
+
   // Public candidate list for quick login presets
   app.get("/api/auth/staff-candidates", (req, res) => {
     const staffList = getStoreState().staffList
@@ -457,40 +502,44 @@ async function startServer() {
       return res.status(400).json({ error: "Thiếu thông tin email hoặc mã xác thực." });
     }
 
-    const entry = verificationStore.get(email);
-    if (!entry) {
-      return res.status(400).json({
-        error: "Chưa có mã xác thực nào được gửi cho email này hoặc mã đã hết hạn. Vui lòng nhấn gửi lại mã.",
-      });
-    }
-
-    if (Date.now() > entry.expiresAt) {
-      verificationStore.delete(email);
-      return res.status(400).json({ error: "Mã xác thực đã hết hạn. Vui lòng gửi lại mã mới." });
-    }
-
-    entry.attempts += 1;
-    if (entry.attempts > 5) {
-      verificationStore.delete(email);
-      return res.status(400).json({ error: "Bạn đã nhập sai quá 5 lần. Vui lòng yêu cầu mã xác thực mới." });
-    }
-
-    if (entry.code !== submittedCode) {
-      return res.status(400).json({
-        error: "Mã xác thực không chính xác. Vui lòng kiểm tra lại 6 chữ số.",
-      });
-    }
-
     const staff = getStoreState().staffList.find((candidate) => candidate.email.toLowerCase() === email);
     if (!staff || staff.status !== "active") {
       verificationStore.delete(email);
       return res.status(403).json({ error: "Tài khoản nhân sự không còn hoạt động." });
     }
 
+    const isTester = staff.id === "user-tester" || email === "tester@smartsale.ai";
+
+    if (!isTester) {
+      const entry = verificationStore.get(email);
+      if (!entry) {
+        return res.status(400).json({
+          error: "Chưa có mã xác thực nào được gửi cho email này hoặc mã đã hết hạn. Vui lòng nhấn gửi lại mã.",
+        });
+      }
+
+      if (Date.now() > entry.expiresAt) {
+        verificationStore.delete(email);
+        return res.status(400).json({ error: "Mã xác thực đã hết hạn. Vui lòng gửi lại mã mới." });
+      }
+
+      entry.attempts += 1;
+      if (entry.attempts > 5) {
+        verificationStore.delete(email);
+        return res.status(400).json({ error: "Bạn đã nhập sai quá 5 lần. Vui lòng yêu cầu mã xác thực mới." });
+      }
+
+      if (entry.code !== submittedCode) {
+        return res.status(400).json({
+          error: "Mã xác thực không chính xác. Vui lòng kiểm tra lại 6 chữ số.",
+        });
+      }
+    }
+
     verificationStore.delete(email);
 
-    // CHỈ TÀI KHOẢN ADMIN (CHỦ CỬA HÀNG) VÀ MANAGER (QUẢN LÝ) MỚI CẦN XÁC THỰC KHUÔN MẶT
-    const isFaceRequired = staff.faceRequired || staff.role === "admin" || staff.role === "manager";
+    // CHỈ TÀI KHOẢN ADMIN VÀ MANAGER MỚI CẦN XÁC THỰC KHUÔN MẶT (BỎ QUA HOÀN TOÀN CHO TESTER)
+    const isFaceRequired = !isTester && (staff.faceRequired || staff.role === "admin" || staff.role === "manager");
     if (isFaceRequired) {
       const tempToken = randomBytes(24).toString("hex");
       facePendingStore.set(tempToken, {
@@ -508,9 +557,11 @@ async function startServer() {
       });
     }
 
-    // THU NGÂN VÀ THỦ KHO: Đăng nhập thành công ngay lập tức (bỏ qua nhận diện khuôn mặt)
+    // ĐĂNG NHẬP NGAY LẬP TỨC (BỎ QUA FACE ID CHO TESTER VÀ THU NGÂN / THỦ KHO)
     const sessionToken = randomBytes(32).toString("hex");
-    const expiresAt = Date.now() + 8 * 60 * 60 * 1000; // 8 hours validity
+    const expiresAt = isTester
+      ? Date.now() + 30 * 24 * 60 * 60 * 1000 // 30 days validity for tester
+      : Date.now() + 8 * 60 * 60 * 1000; // 8 hours validity
     createStoreSession(
       sessionToken,
       email,
@@ -522,7 +573,7 @@ async function startServer() {
     res.json({
       success: true,
       requireFace: false,
-      message: "Xác thực email thành công.",
+      message: isTester ? "Đăng nhập Tester thành công! Bỏ qua OTP và Face ID." : "Xác thực email thành công.",
       email,
       sessionToken,
       user: staff,

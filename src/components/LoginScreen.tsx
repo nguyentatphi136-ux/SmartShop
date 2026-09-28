@@ -18,6 +18,7 @@ import {
   Scan,
 } from 'lucide-react';
 import { StaffUser } from '../types';
+import { INITIAL_STAFF, TESTER_STAFF_USER } from '../data/initialData';
 import { FaceAuthModal } from './FaceAuthModal';
 import { ErrorBoundary } from './ErrorBoundary';
 
@@ -58,7 +59,12 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
       .then((res) => res.json())
       .then((data) => {
         if (data.success && Array.isArray(data.staffList) && data.staffList.length > 0) {
-          setActiveStaffList(data.staffList);
+          const list: StaffUser[] = data.staffList;
+          if (!list.some((s) => s.id === 'user-tester' || s.email.toLowerCase() === 'tester@smartsale.ai')) {
+            setActiveStaffList([TESTER_STAFF_USER, ...list]);
+          } else {
+            setActiveStaffList(list);
+          }
         }
       })
       .catch(() => {});
@@ -88,11 +94,50 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
     }
   }, [step]);
 
+  // Quick 1-Click Tester Login (Bypasses OTP and Face ID completely)
+  const handleTesterQuickLogin = async () => {
+    setIsLoading(true);
+    setErrorMsg(null);
+    setSuccessMsg('Đang đăng nhập nhanh tài khoản Tester...');
+
+    try {
+      const res = await fetch('/api/auth/quick-tester-login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success || !data.user) {
+        throw new Error(data.error || 'Không thể đăng nhập tài khoản Tester.');
+      }
+
+      const authenticatedUser: StaffUser = data.user;
+      try {
+        localStorage.setItem('smartsale_auth_user', JSON.stringify(authenticatedUser));
+        if (data.sessionToken) {
+          localStorage.setItem('smartsale_session_token', data.sessionToken);
+        }
+      } catch (e) {}
+
+      onLoginSuccess(authenticatedUser);
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : 'Không thể kết nối máy chủ.');
+      setSuccessMsg(null);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   // Step 1: Send verification code to email
   const handleSendVerificationCode = async (targetEmail?: string) => {
     const cleanEmail = (targetEmail || email).trim().toLowerCase();
     setErrorMsg(null);
     setSuccessMsg(null);
+
+    // Tự động chuyển hướng đăng nhập nhanh cho tài khoản tester
+    if (cleanEmail === 'tester@smartsale.ai') {
+      await handleTesterQuickLogin();
+      return;
+    }
 
     if (!cleanEmail || !cleanEmail.includes('@') || !cleanEmail.includes('.')) {
       setErrorMsg('Vui lòng nhập địa chỉ email hợp lệ (ví dụ: nguyentatphi136@gmail.com)');
@@ -247,6 +292,36 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
 
         {/* Card Body */}
         <div className="p-6 sm:p-8">
+          {/* Quick Tester Login Box */}
+          <div className="mb-5 p-3.5 rounded-2xl bg-gradient-to-br from-emerald-500/10 via-teal-500/10 to-emerald-500/10 border border-emerald-500/30 dark:border-emerald-500/40 shadow-sm relative overflow-hidden">
+            <div className="flex items-center justify-between mb-2">
+              <div className="flex items-center gap-2">
+                <span className="flex h-2.5 w-2.5 relative">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"></span>
+                </span>
+                <span className="text-xs font-bold text-emerald-800 dark:text-emerald-300">
+                  Tài khoản Tester (Kiểm thử)
+                </span>
+              </div>
+              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-950/80 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800">
+                ⚡ Không OTP & Face ID
+              </span>
+            </div>
+            <p className="text-[11px] text-slate-600 dark:text-slate-300 mb-3 leading-relaxed">
+              Trải nghiệm ngay toàn bộ tính năng quản trị, bán hàng POS và chuyển đổi vai trò không cần chờ OTP hay quét camera.
+            </p>
+            <button
+              type="button"
+              disabled={isLoading}
+              onClick={handleTesterQuickLogin}
+              className="w-full py-2.5 px-3 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold text-xs shadow-md shadow-emerald-600/25 flex items-center justify-center gap-2 transition-all cursor-pointer disabled:opacity-50 active:scale-[0.98]"
+            >
+              <Sparkles className="w-4 h-4" />
+              <span>⚡ Đăng nhập Tester ngay (1-Click)</span>
+            </button>
+          </div>
+
           {errorMsg && (
             <div className="mb-5 p-3 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800/50 flex items-start gap-2.5 text-xs text-rose-700 dark:text-rose-300 animate-fadeIn">
               <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5 text-rose-600 dark:text-rose-400" />
@@ -319,51 +394,78 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
                   Tài khoản nhân sự có sẵn:
                 </p>
                 <div className="space-y-1.5 max-h-52 overflow-y-auto pr-1">
-                  {activeStaffList.map((staff) => (
-                    <button
-                      key={staff.id}
-                      type="button"
-                      onClick={() => {
-                        setEmail(staff.email);
-                        handleSendVerificationCode(staff.email);
-                      }}
-                      className={`w-full text-left p-2.5 rounded-xl border flex items-center justify-between text-xs transition-all ${
-                        email === staff.email
-                          ? 'border-blue-500 bg-blue-50/50 dark:bg-blue-950/40'
-                          : 'border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/50'
-                      }`}
-                    >
-                      <div className="flex items-center gap-2">
-                        <div className="w-7 h-7 rounded-lg bg-slate-200 dark:bg-slate-700 flex items-center justify-center font-bold text-slate-700 dark:text-slate-200 text-xs">
-                          {staff.name.charAt(0)}
-                        </div>
-                        <div>
-                          <p className="font-semibold text-slate-900 dark:text-slate-100">{staff.name}</p>
-                          <p className="text-[11px] text-slate-500 dark:text-slate-400">{staff.email}</p>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-1.5">
-                        <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
-                          {staff.role === 'admin'
-                            ? 'Chủ cửa hàng'
-                            : staff.role === 'manager'
-                            ? 'Quản lý'
-                            : staff.role === 'inventory_staff'
-                            ? 'Thủ kho'
-                            : 'Thu ngân'}
-                        </span>
-                        {(staff.role === 'admin' || staff.role === 'manager') && (
-                          <span
-                            className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] font-bold bg-indigo-50 dark:bg-indigo-950/70 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800"
-                            title="Yêu cầu quét khuôn mặt Face ID sau khi nhập OTP"
+                  {activeStaffList.map((staff) => {
+                    const isTester = staff.id === 'user-tester' || staff.email === 'tester@smartsale.ai';
+                    return (
+                      <button
+                        key={staff.id}
+                        type="button"
+                        onClick={() => {
+                          if (isTester) {
+                            handleTesterQuickLogin();
+                          } else {
+                            setEmail(staff.email);
+                            handleSendVerificationCode(staff.email);
+                          }
+                        }}
+                        className={`w-full text-left p-2.5 rounded-xl border flex items-center justify-between text-xs transition-all ${
+                          isTester
+                            ? 'border-emerald-400/60 bg-emerald-50/60 dark:bg-emerald-950/30 hover:bg-emerald-100/60 dark:hover:bg-emerald-900/40'
+                            : email === staff.email
+                            ? 'border-blue-500 bg-blue-50/50 dark:bg-blue-950/40'
+                            : 'border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/50'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2">
+                          <div
+                            className={`w-7 h-7 rounded-lg flex items-center justify-center font-bold text-xs ${
+                              isTester
+                                ? 'bg-emerald-600 text-white'
+                                : 'bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200'
+                            }`}
                           >
-                            <Scan className="w-2.5 h-2.5 text-indigo-600 dark:text-indigo-400" />
-                            Face ID
-                          </span>
-                        )}
-                      </div>
-                    </button>
-                  ))}
+                            {isTester ? '⚡' : staff.name.charAt(0)}
+                          </div>
+                          <div>
+                            <p className={`font-semibold ${isTester ? 'text-emerald-900 dark:text-emerald-100' : 'text-slate-900 dark:text-slate-100'}`}>
+                              {staff.name}
+                            </p>
+                            <p className={`text-[11px] ${isTester ? 'text-emerald-700 dark:text-emerald-300' : 'text-slate-500 dark:text-slate-400'}`}>
+                              {staff.email}
+                            </p>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          {isTester ? (
+                            <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-emerald-100 dark:bg-emerald-900/80 text-emerald-800 dark:text-emerald-200 border border-emerald-300 dark:border-emerald-700">
+                              Bỏ qua OTP & Face ID
+                            </span>
+                          ) : (
+                            <>
+                              <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
+                                {staff.role === 'admin'
+                                  ? 'Chủ cửa hàng'
+                                  : staff.role === 'manager'
+                                  ? 'Quản lý'
+                                  : staff.role === 'inventory_staff'
+                                  ? 'Thủ kho'
+                                  : 'Thu ngân'}
+                              </span>
+                              {(staff.role === 'admin' || staff.role === 'manager') && (
+                                <span
+                                  className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] font-bold bg-indigo-50 dark:bg-indigo-950/70 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800"
+                                  title="Yêu cầu quét khuôn mặt Face ID sau khi nhập OTP"
+                                >
+                                  <Scan className="w-2.5 h-2.5 text-indigo-600 dark:text-indigo-400" />
+                                  Face ID
+                                </span>
+                              )}
+                            </>
+                          )}
+                        </div>
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
             </form>

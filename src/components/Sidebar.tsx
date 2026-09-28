@@ -43,7 +43,6 @@ interface SidebarProps {
 interface NavItem {
   id: MainTab;
   label: string;
-  emojiIcon?: string;
   icon: React.ReactNode;
   badge?: string;
   isAi?: boolean;
@@ -77,13 +76,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
         {
           id: 'dashboard',
           label: t.navDashboard,
-          emojiIcon: '📊',
           icon: <LayoutDashboard className="w-4 h-4" />,
         },
         {
           id: 'pos',
           label: t.navPos,
-          emojiIcon: '🛒',
           icon: <Store className="w-4 h-4" />,
         },
       ],
@@ -94,25 +91,21 @@ export const Sidebar: React.FC<SidebarProps> = ({
         {
           id: 'products',
           label: t.navProducts,
-          emojiIcon: '📦',
           icon: <Package className="w-4 h-4" />,
         },
         {
           id: 'customers',
           label: t.navCustomers,
-          emojiIcon: '👥',
           icon: <Users className="w-4 h-4" />,
         },
         {
           id: 'invoices',
           label: t.navInvoices,
-          emojiIcon: '📄',
           icon: <Receipt className="w-4 h-4" />,
         },
         {
           id: 'inventory',
           label: language === 'vi' ? 'Tồn kho & Chi nhánh' : 'Inventory & Branches',
-          emojiIcon: '📋',
           icon: <ClipboardList className="w-4 h-4" />,
         },
       ],
@@ -123,13 +116,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
         {
           id: 'revenue-report',
           label: t.navRevenueReport,
-          emojiIcon: '📈',
           icon: <TrendingUp className="w-4 h-4" />,
         },
         {
           id: 'analytics-report',
           label: t.navAnalyticsReport,
-          emojiIcon: '📊',
           icon: <BarChart3 className="w-4 h-4" />,
         },
       ],
@@ -140,14 +131,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
         {
           id: 'ai-assistant',
           label: t.navAiAssistant,
-          emojiIcon: '🤖',
           icon: <Bot className="w-4 h-4" />,
           isAi: true,
         },
         {
           id: 'ai-analyst',
           label: t.navAiAnalyst,
-          emojiIcon: '🧠',
           icon: <Brain className="w-4 h-4" />,
           isAi: true,
         },
@@ -159,13 +148,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
         {
           id: 'users-permissions',
           label: t.navUsersPermissions,
-          emojiIcon: '👤',
           icon: <ShieldCheck className="w-4 h-4" />,
         },
         {
           id: 'settings',
           label: t.navSettings,
-          emojiIcon: '⚙️',
           icon: <Settings className="w-4 h-4" />,
         },
       ],
@@ -206,7 +193,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
               className="flex items-center gap-2.5 cursor-pointer min-w-0"
               onClick={() => handleItemClick('dashboard')}
             >
-              <div className="w-8 h-8 rounded-xl bg-gradient-to-tr from-blue-700 to-blue-500 flex items-center justify-center text-white font-bold shadow-md shadow-blue-500/20 flex-shrink-0">
+              <div className="w-8 h-8 rounded-xl bg-slate-900 dark:bg-white flex items-center justify-center text-white dark:text-slate-900 font-bold shadow-xs flex-shrink-0">
                 <Bot className="w-5 h-5" />
               </div>
               <div className="truncate">
@@ -220,7 +207,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
           {collapsed && (
             <div
-              className="mx-auto w-8 h-8 rounded-xl bg-blue-600 flex items-center justify-center text-white cursor-pointer shadow-md shadow-blue-500/20"
+              className="mx-auto w-8 h-8 rounded-xl bg-slate-900 dark:bg-white flex items-center justify-center text-white dark:text-slate-900 cursor-pointer shadow-xs"
               onClick={() => setIsCollapsed(false)}
               title="Mở rộng Sidebar"
             >
@@ -284,40 +271,45 @@ export const Sidebar: React.FC<SidebarProps> = ({
                           ? item.label
                           : undefined
                       }
-                      className={`w-full flex items-center rounded-xl text-xs sm:text-sm font-medium transition-all ${
+                      className={`w-full flex items-center rounded-xl text-xs sm:text-sm font-medium transition-all group ${
                         collapsed
-                          ? 'justify-center p-2.5'
-                          : 'justify-between px-3 py-2.5 sm:py-2'
+                          ? 'justify-center p-2'
+                          : 'justify-between px-3 py-2'
                       } ${
                         !isAllowed
                           ? 'opacity-40 hover:opacity-75 text-slate-400 dark:text-slate-500 hover:bg-slate-100/50 dark:hover:bg-slate-800/40 cursor-pointer'
                           : isActive
                           ? isDark
-                            ? 'bg-blue-950/70 text-blue-400 font-bold border-l-4 border-blue-500 shadow-xs'
-                            : 'bg-blue-50/80 text-blue-700 font-bold border-l-4 border-blue-600 shadow-xs'
+                            ? 'bg-slate-800 text-white font-bold border-l-4 border-white shadow-xs'
+                            : 'bg-slate-100 text-slate-900 font-bold border-l-4 border-slate-900 shadow-xs'
                           : isDark
-                          ? 'hover:bg-slate-800 text-slate-300 hover:text-white'
-                          : 'hover:bg-slate-100 text-slate-700 hover:text-slate-900'
+                          ? 'hover:bg-slate-800/60 text-slate-300 hover:text-white'
+                          : 'hover:bg-slate-100/80 text-slate-600 hover:text-slate-900'
                       }`}
                     >
                       <div className="flex items-center gap-3 min-w-0">
-                        {item.emojiIcon ? (
-                          <span className={`text-lg sm:text-base leading-none flex-shrink-0 ${!isAllowed ? 'grayscale opacity-70' : ''}`}>
-                            {item.emojiIcon}
-                          </span>
-                        ) : (
-                          <span
-                            className={
-                              isActive
-                                ? 'text-blue-600 dark:text-blue-400'
-                                : 'text-slate-400 dark:text-slate-400'
-                            }
-                          >
-                            {item.icon}
-                          </span>
-                        )}
+                        {/* Synchronized Monochromatic Function Logo */}
+                        <div
+                          className={`w-7 h-7 rounded-lg flex items-center justify-center transition-all flex-shrink-0 ${
+                            !isAllowed
+                              ? 'bg-slate-100 dark:bg-slate-800/60 text-slate-400 opacity-60'
+                              : isActive
+                              ? isDark
+                                ? 'bg-white text-slate-900 shadow-xs'
+                                : 'bg-slate-900 text-white shadow-xs'
+                              : isDark
+                              ? 'bg-slate-800/80 text-slate-400 group-hover:text-slate-200 group-hover:bg-slate-800'
+                              : 'bg-slate-100 text-slate-600 group-hover:text-slate-900 group-hover:bg-slate-200/70'
+                          }`}
+                        >
+                          {item.icon}
+                        </div>
                         {!collapsed && (
-                          <span className={`truncate text-sm sm:text-xs font-semibold ${!isAllowed ? 'line-through decoration-slate-300 dark:decoration-slate-600' : ''}`}>
+                          <span
+                            className={`truncate text-sm sm:text-xs font-semibold ${
+                              !isAllowed ? 'line-through decoration-slate-300 dark:decoration-slate-600' : ''
+                            }`}
+                          >
                             {item.label}
                           </span>
                         )}
@@ -330,7 +322,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                               <Lock className="w-3 h-3" />
                             </span>
                           ) : item.isAi ? (
-                            <span className="px-1.5 py-0.2 rounded-full text-[9px] font-bold bg-blue-100 text-blue-700 dark:bg-blue-900/60 dark:text-blue-300">
+                            <span className="px-1.5 py-0.2 rounded-full text-[9px] font-bold bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300 border border-slate-200 dark:border-slate-700">
                               AI
                             </span>
                           ) : null}
@@ -349,7 +341,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           {!collapsed ? (
             <div className="flex items-center justify-between gap-2 p-2 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/70 dark:border-slate-800">
               <div className="flex items-center gap-2 min-w-0">
-                <div className="w-8 h-8 rounded-lg bg-blue-600 text-white flex items-center justify-center font-bold text-xs flex-shrink-0 shadow-xs">
+                <div className="w-8 h-8 rounded-lg bg-slate-900 dark:bg-slate-700 text-white flex items-center justify-center font-bold text-xs flex-shrink-0 shadow-xs">
                   {currentUser?.name ? currentUser.name.charAt(0).toUpperCase() : 'P'}
                 </div>
                 <div className="min-w-0 flex-1">

@@ -824,11 +824,50 @@ interface ReportModalProps {
   isOpen: boolean;
   onClose: () => void;
   isDark?: boolean;
+  orders?: Order[];
+  products?: Product[];
 }
 
-export const ReportModal: React.FC<ReportModalProps> = ({ isOpen, onClose, isDark }) => {
+export const ReportModal: React.FC<ReportModalProps> = ({ isOpen, onClose, isDark, orders = [], products = [] }) => {
   const { language, t, formatCurr } = useLanguage();
   if (!isOpen) return null;
+
+  const now = new Date();
+  const completedOrders = orders.filter((o) => o.status === 'completed');
+  const todayOrders = completedOrders.filter((o) => {
+    const d = new Date(o.createdAt.includes('T') ? o.createdAt : o.createdAt.replace(' ', 'T'));
+    return (
+      d.getFullYear() === now.getFullYear() &&
+      d.getMonth() === now.getMonth() &&
+      d.getDate() === now.getDate()
+    );
+  });
+
+  const activeOrders = todayOrders.length > 0 ? todayOrders : completedOrders;
+  const isUsingToday = todayOrders.length > 0;
+  const netRevenue = activeOrders.reduce((sum, o) => sum + o.total, 0);
+  const estimatedProfit = activeOrders.reduce(
+    (sum, o) =>
+      sum +
+      o.items.reduce(
+        (itemSum, item) => itemSum + (item.product.price - item.product.costPrice) * item.quantity,
+        0
+      ),
+    0
+  );
+  const profitMargin = netRevenue > 0 ? ((estimatedProfit / netRevenue) * 100).toFixed(1) : '0.0';
+  const aov = activeOrders.length > 0 ? Math.round(netRevenue / activeOrders.length) : 0;
+
+  // Top payment method or channel
+  const payMethods = activeOrders.reduce<Record<string, number>>((acc, o) => {
+    const method = o.paymentMethod || (language === 'vi' ? 'Tiền mặt' : 'Cash');
+    acc[method] = (acc[method] || 0) + 1;
+    return acc;
+  }, {});
+  const topMethod = Object.entries(payMethods).sort((a, b) => b[1] - a[1])[0];
+  const topMethodName = topMethod
+    ? `${topMethod[0]} (${Math.round((topMethod[1] / Math.max(1, activeOrders.length)) * 100)}%)`
+    : (language === 'vi' ? 'Tiền mặt / QR (100%)' : 'Cash / QR (100%)');
 
   return (
     <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-in fade-in">
@@ -844,27 +883,34 @@ export const ReportModal: React.FC<ReportModalProps> = ({ isOpen, onClose, isDar
           <X className="w-5 h-5" />
         </button>
 
-        <h2 className="text-lg font-bold">{t.revenueReportTitle}</h2>
-        <p className="text-xs text-slate-500 mb-4">
+        <div className="flex items-center gap-2">
+          <h2 className="text-lg font-bold">{t.revenueReportTitle}</h2>
+          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300">
+            {isUsingToday ? (language === 'vi' ? '🟢 Dữ liệu hôm nay' : '🟢 Today Live') : (language === 'vi' ? 'Toàn thời gian' : 'All-time')}
+          </span>
+        </div>
+        <p className="text-xs text-slate-500 mb-4 mt-0.5">
           {t.revenueReportSubtitle}
         </p>
 
         <div className="space-y-3 text-xs">
-          <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-700 flex justify-between">
+          <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-700 flex justify-between items-center">
             <span className="text-slate-500">{t.netRevenueToday}:</span>
-            <span className="font-bold text-slate-900 dark:text-white">{formatCurr(12500000)}</span>
+            <span className="font-bold font-mono text-slate-900 dark:text-white text-sm">{formatCurr(netRevenue)}</span>
           </div>
-          <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-700 flex justify-between">
+          <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-700 flex justify-between items-center">
             <span className="text-slate-500">{t.estimatedProfit}:</span>
-            <span className="font-bold text-emerald-600">{formatCurr(3850000)} (30.8%)</span>
+            <span className="font-bold font-mono text-emerald-600 dark:text-emerald-400 text-sm">
+              {formatCurr(estimatedProfit)} <span className="text-xs font-normal text-slate-400">({profitMargin}%)</span>
+            </span>
           </div>
-          <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-700 flex justify-between">
-            <span className="text-slate-500">{t.averageOrderValue}:</span>
-            <span className="font-bold text-slate-900 dark:text-white">{formatCurr(2450000)}</span>
+          <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-700 flex justify-between items-center">
+            <span className="text-slate-500">{t.averageOrderValue} (AOV):</span>
+            <span className="font-bold font-mono text-purple-600 dark:text-purple-400 text-sm">{formatCurr(aov)}</span>
           </div>
-          <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-700 flex justify-between">
-            <span className="text-slate-500">{t.topBranch}:</span>
-            <span className="font-bold text-blue-600">Quận 1, TP.HCM (62%)</span>
+          <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-700 flex justify-between items-center">
+            <span className="text-slate-500">{language === 'vi' ? 'Phương thức chính' : 'Top Method'}:</span>
+            <span className="font-bold text-blue-600 dark:text-blue-400">{topMethodName}</span>
           </div>
         </div>
 
@@ -874,7 +920,7 @@ export const ReportModal: React.FC<ReportModalProps> = ({ isOpen, onClose, isDar
               alert(language === 'vi' ? 'Đã tải xuống file báo cáo chi tiết PDF!' : 'PDF Report downloaded successfully!');
               onClose();
             }}
-            className="px-4 py-2 rounded-xl bg-blue-600 text-white font-semibold text-xs"
+            className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs transition-colors cursor-pointer"
           >
             {t.downloadPdf}
           </button>

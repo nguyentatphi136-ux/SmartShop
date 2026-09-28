@@ -110,7 +110,7 @@ export const TopBar: React.FC<TopBarProps> = ({
           className="flex lg:hidden items-center gap-1.5 cursor-pointer mr-1"
           onClick={() => onTabChange('dashboard')}
         >
-          <div className="w-7 h-7 rounded-lg bg-blue-600 flex items-center justify-center text-white font-bold text-xs shadow-xs">
+          <div className="w-7 h-7 rounded-lg bg-slate-900 dark:bg-white text-white dark:text-slate-900 flex items-center justify-center font-bold text-xs shadow-xs">
             <Bot className="w-4 h-4" />
           </div>
           <span className="font-bold text-sm tracking-tight text-slate-900 dark:text-white hidden xs:inline">
@@ -224,7 +224,7 @@ export const TopBar: React.FC<TopBarProps> = ({
                 title={language === 'vi' ? 'Đang ở Chế độ Dữ liệu Thật. Bấm để quản lý' : 'Real Store Data Mode Active'}
               >
                 <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                <span>{language === 'vi' ? '🟢 Dữ liệu thật' : '🟢 Real Data'}</span>
+                <span>{language === 'vi' ? 'Dữ liệu thật' : 'Real Data'}</span>
               </button>
             ) : (
               <button
@@ -235,9 +235,9 @@ export const TopBar: React.FC<TopBarProps> = ({
                 title={language === 'vi' ? 'Bấm để tắt đơn demo và Bật Dữ liệu thật' : 'Click to turn on Real Data'}
               >
                 <span className="w-2 h-2 rounded-full bg-amber-500 group-hover:bg-emerald-500" />
-                <span className="group-hover:hidden">{language === 'vi' ? '🧪 Đang Demo' : '🧪 Demo'}</span>
-                <span className="hidden group-hover:inline font-black text-emerald-600 dark:text-emerald-400">
-                  {language === 'vi' ? '🟢 Bật Dữ liệu Thật' : '🟢 Turn on Real Data'}
+                <span className="group-hover:hidden">{language === 'vi' ? 'Bản Demo' : 'Demo'}</span>
+                <span className="hidden group-hover:inline font-bold text-emerald-600 dark:text-emerald-400">
+                  {language === 'vi' ? 'Bật Dữ liệu Thật' : 'Turn on Real Data'}
                 </span>
               </button>
             )}
