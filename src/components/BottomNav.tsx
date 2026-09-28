@@ -1,7 +1,8 @@
 import React from 'react';
 import { LayoutDashboard, Store, Package, Bot, Menu } from 'lucide-react';
-import { MainTab } from '../types';
+import { MainTab, StaffUser } from '../types';
 import { useLanguage } from '../utils/i18n';
+import { canUserAccessTab, RolePermissionsMatrix } from '../utils/permissions';
 
 interface BottomNavProps {
   currentTab: MainTab;
@@ -9,6 +10,8 @@ interface BottomNavProps {
   onOpenMobileMenu: () => void;
   cartCount?: number;
   isDark?: boolean;
+  currentUser?: StaffUser | null;
+  rolePermissions?: RolePermissionsMatrix;
 }
 
 export const BottomNav: React.FC<BottomNavProps> = ({
@@ -17,6 +20,8 @@ export const BottomNav: React.FC<BottomNavProps> = ({
   onOpenMobileMenu,
   cartCount = 0,
   isDark,
+  currentUser,
+  rolePermissions,
 }) => {
   const { t, language } = useLanguage();
 
@@ -42,7 +47,7 @@ export const BottomNav: React.FC<BottomNavProps> = ({
       label: t.navAiAssistant,
       icon: <Bot className="w-5 h-5" />,
     },
-  ];
+  ].filter((item) => canUserAccessTab(currentUser, item.id, rolePermissions));
 
   return (
     <nav

@@ -201,7 +201,7 @@ export const RestockScreen: React.FC<RestockScreenProps> = ({
                     isDark ? 'hover:bg-slate-800/50' : 'hover:bg-slate-50'
                   }`}
                 >
-                  <td className="py-3 px-4 font-bold text-blue-600 dark:text-blue-400">
+                  <td className="py-3 px-4 font-bold text-blue-600 dark:text-blue-400 whitespace-nowrap">
                     {ord.code}
                   </td>
                   <td className="py-3 px-4 text-slate-500 dark:text-slate-400 whitespace-nowrap">

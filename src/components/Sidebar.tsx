@@ -16,7 +16,6 @@ import {
   ChevronDown,
   X,
   LogOut,
-  Lock,
 } from 'lucide-react';
 import { MainTab, StaffUser } from '../types';
 import { useLanguage } from '../utils/i18n';
@@ -172,6 +171,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
     },
   ];
 
+  // Chỉ hiển thị chức năng mà vai trò hiện tại được phép dùng; ẩn luôn nhóm không còn mục nào
+  const visibleNavGroups = navGroups
+    .map((group) => ({
+      ...group,
+      items: group.items.filter((item) => canUserAccessTab(currentUser, item.id, rolePermissions)),
+    }))
+    .filter((group) => group.items.length > 0);
 
   const handleItemClick = (id: MainTab, label?: string) => {
     const isAllowed = canUserAccessTab(currentUser, id, rolePermissions);
@@ -255,7 +261,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           id={isMobileDrawer ? 'sidebar-nav-scroll-mobile' : 'sidebar-nav-scroll'}
           className="flex-1 overflow-y-auto px-3 py-3 space-y-4 scrollbar-thin scrollbar-thumb-slate-200 dark:scrollbar-thumb-slate-700"
         >
-          {navGroups.map((group, gIdx) => (
+          {visibleNavGroups.map((group, gIdx) => (
             <div key={gIdx} className="space-y-1">
               {group.title && !collapsed && (
                 <h3 className="px-3 text-[11px] font-bold tracking-wider text-slate-400 dark:text-slate-500 uppercase mb-1.5">
@@ -270,28 +276,19 @@ export const Sidebar: React.FC<SidebarProps> = ({
               <div className="space-y-0.5">
                 {group.items.map((item) => {
                   const isActive = currentTab === item.id;
-                  const isAllowed = canUserAccessTab(currentUser, item.id, rolePermissions);
 
                   return (
                     <button
                       key={item.id}
                       id={`nav-item-${item.id}${isMobileDrawer ? '-mobile' : ''}`}
                       onClick={() => handleItemClick(item.id, item.label)}
-                      title={
-                        !isAllowed
-                          ? `${item.label} (Không có quyền truy cập)`
-                          : collapsed
-                          ? item.label
-                          : undefined
-                      }
+                      title={collapsed ? item.label : undefined}
                       className={`w-full flex items-center rounded-xl text-xs sm:text-sm font-medium transition-all ${
                         collapsed
                           ? 'justify-center p-2.5'
                           : 'justify-between px-3 py-2.5 sm:py-2'
                       } ${
-                        !isAllowed
-                          ? 'opacity-40 hover:opacity-75 text-slate-400 dark:text-slate-500 hover:bg-slate-100/50 dark:hover:bg-slate-800/40 cursor-pointer'
-                          : isActive
+                        isActive
                           ? isDark
                             ? 'bg-blue-950/70 text-blue-400 font-bold border-l-4 border-blue-500 shadow-xs'
                             : 'bg-blue-50/80 text-blue-700 font-bold border-l-4 border-blue-600 shadow-xs'
@@ -302,7 +299,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     >
                       <div className="flex items-center gap-3 min-w-0">
                         {item.emojiIcon ? (
-                          <span className={`text-lg sm:text-base leading-none flex-shrink-0 ${!isAllowed ? 'grayscale opacity-70' : ''}`}>
+                          <span className="text-lg sm:text-base leading-none flex-shrink-0">
                             {item.emojiIcon}
                           </span>
                         ) : (
@@ -317,23 +314,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
                           </span>
                         )}
                         {!collapsed && (
-                          <span className={`truncate text-sm sm:text-xs font-semibold ${!isAllowed ? 'line-through decoration-slate-300 dark:decoration-slate-600' : ''}`}>
+                          <span className="truncate text-sm sm:text-xs font-semibold">
                             {item.label}
                           </span>
                         )}
                       </div>
 
-                      {!collapsed && (
+                      {!collapsed && item.isAi && (
                         <div className="flex items-center gap-1.5 flex-shrink-0">
-                          {!isAllowed ? (
-                            <span className="p-1 rounded bg-slate-100 dark:bg-slate-800 text-slate-400" title="Chức năng bị khóa đối với vai trò này">
-                              <Lock className="w-3 h-3" />
-                            </span>
-                          ) : item.isAi ? (
-                            <span className="px-1.5 py-0.2 rounded-full text-[9px] font-bold bg-blue-100 text-blue-700 dark:bg-blue-900/60 dark:text-blue-300">
-                              AI
-                            </span>
-                          ) : null}
+                          <span className="px-1.5 py-0.2 rounded-full text-[9px] font-bold bg-blue-100 text-blue-700 dark:bg-blue-900/60 dark:text-blue-300">
+                            AI
+                          </span>
                         </div>
                       )}
                     </button>

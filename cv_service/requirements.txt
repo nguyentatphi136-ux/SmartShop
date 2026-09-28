@@ -1,0 +1,14 @@
+# Thư viện cho Python Computer Vision Service (MTCNN + FaceNet)
+# Cài đặt: pip install -r cv_service/requirements.txt
+# Đã kiểm thử với Python 3.12
+--extra-index-url https://download.pytorch.org/whl/cpu
+
+fastapi==0.141.1
+uvicorn==0.54.0
+python-multipart==0.0.32
+tqdm==4.70.1
+numpy==2.5.3
+pillow==12.3.0
+torch==2.14.0
+torchvision==0.29.0
+facenet-pytorch==2.5.3

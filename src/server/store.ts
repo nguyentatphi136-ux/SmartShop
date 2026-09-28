@@ -13,6 +13,7 @@ import {
   StaffUser,
   WarrantyClaim,
 } from '../types';
+import { formatStoreDateTime } from '../utils/formatters';
 import {
   INITIAL_CUSTOMERS,
   INITIAL_ORDERS,
@@ -187,7 +188,7 @@ export function checkoutStoreOrder(input: {
     const order: Order = {
       id: `ord-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       code: `HD-${Date.now().toString().slice(-8)}`,
-      createdAt: now.toISOString().replace('T', ' ').substring(0, 16),
+      createdAt: formatStoreDateTime(now),
       customer,
       items,
       subtotal,
@@ -279,7 +280,7 @@ export function createWarrantyClaim(input: { orderId: string; productId: string;
   return transaction();
 }
 
-export function restockStoreProduct(input: { productId: string; quantity: number; branch: string }) {
+export function restockStoreProduct(input: { productId: string; quantity: number; branch: string; receiveNow?: boolean }) {
   const transaction = database.transaction(() => {
     const state = getStoreState();
     const quantity = Number(input.quantity);
@@ -288,10 +289,11 @@ export function restockStoreProduct(input: { productId: string; quantity: number
       throw new Error('Sản phẩm hoặc số lượng nhập không hợp lệ.');
     }
 
+    const restockOrderId = `restock-${Date.now()}`;
     state.restockOrders = [{
-      id: `restock-${Date.now()}`,
+      id: restockOrderId,
       code: `PNK-${Date.now().toString().slice(-8)}`,
-      createdAt: new Date().toISOString().replace('T', ' ').substring(0, 16),
+      createdAt: formatStoreDateTime(),
       product: { ...product },
       quantity,
       totalCost: quantity * product.costPrice,
@@ -299,7 +301,8 @@ export function restockStoreProduct(input: { productId: string; quantity: number
       status: 'in_transit',
     }, ...state.restockOrders];
     replaceStoreState(state);
-    return state;
+    // Hàng đã về kho: nhận phiếu ngay để cộng tồn kho (nếu không, phiếu chờ "Nhận hàng" ở màn hình Tồn kho)
+    return input.receiveNow ? receiveRestockOrder(restockOrderId) : state;
   });
   return transaction();
 }
@@ -445,6 +448,20 @@ export function deleteStoreStaff(staffId: string): StoreState {
   return transaction();
 }
 
+function assertValidProductPricing(product: Product) {
+  if (!Number.isFinite(product.price) || product.price <= 0) {
+    throw new Error('Giá bán phải lớn hơn 0.');
+  }
+  if (!Number.isFinite(product.costPrice) || product.costPrice < 0) {
+    throw new Error('Giá vốn không được âm.');
+  }
+  if (product.costPrice >= product.price) {
+    throw new Error(
+      `Giá vốn (${product.costPrice.toLocaleString('vi-VN')}đ) phải nhỏ hơn giá bán (${product.price.toLocaleString('vi-VN')}đ).`
+    );
+  }
+}
+
 export function addStoreProduct(productData: Partial<Product>): { state: StoreState; product: Product } {
   const transaction = database.transaction(() => {
     const state = getStoreState();
@@ -461,6 +478,7 @@ export function addStoreProduct(productData: Partial<Product>): { state: StoreSt
       status: (Number(productData.stock) || 0) === 0 ? 'out_of_stock' : (Number(productData.stock) || 0) <= 5 ? 'low_stock' : 'in_stock',
       soldCount: 0,
     };
+    assertValidProductPricing(newProduct);
     state.products = [newProduct, ...state.products];
     replaceStoreState(state);
     return { state, product: newProduct };
@@ -480,9 +498,13 @@ export function updateStoreProduct(productData: Partial<Product> & { id: string 
     const updated: Product = {
       ...current,
       ...productData,
+      category: productData.category?.trim() || current.category,
+      price: Number(productData.price ?? current.price),
+      costPrice: Number(productData.costPrice ?? current.costPrice),
       stock: newStock,
       status: newStock === 0 ? 'out_of_stock' : newStock <= 5 ? 'low_stock' : 'in_stock',
     };
+    assertValidProductPricing(updated);
     state.products = state.products.map((p) => (p.id === productData.id ? updated : p));
     replaceStoreState(state);
     return state;

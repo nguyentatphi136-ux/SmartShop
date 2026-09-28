@@ -125,7 +125,7 @@ export const AiAnalystScreen: React.FC<AiAnalystScreenProps> = ({
     setLoadingStep('Đang tổng hợp dữ liệu sản phẩm & hóa đơn SQLite...');
 
     try {
-      setTimeout(() => setLoadingStep('Gemini 3.7 Flash đang phân tích dòng tiền & dự báo...'), 600);
+      setTimeout(() => setLoadingStep('Gemini AI đang phân tích dòng tiền & dự báo...'), 600);
 
       const res = await fetch('/api/ai/analyze-business', {
         method: 'POST',
