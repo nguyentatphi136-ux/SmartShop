@@ -22,7 +22,7 @@ import {
   INITIAL_CHAT_SESSIONS,
 } from './data/initialData';
 import { soundManager } from './utils/audioChime';
-import { formatCurrency } from './utils/formatters';
+import { formatCurrency, formatStoreDateTime } from './utils/formatters';
 import { useLanguage } from './utils/i18n';
 import { Sidebar } from './components/Sidebar';
 import { TopBar } from './components/TopBar';
@@ -644,7 +644,7 @@ export function App() {
     const newOrder: Order = {
       id: `ord-rt-${Date.now()}`,
       code: orderCode,
-      createdAt: now.toISOString().replace('T', ' ').substring(0, 16),
+      createdAt: formatStoreDateTime(now),
       customer: {
         id: `cust-rt-${Date.now()}`,
         name: buyerName,
@@ -904,7 +904,7 @@ export function App() {
   };
 
   // Restock Handlers
-  const handleConfirmRestock = async (productId: string, amount: number) => {
+  const handleConfirmRestock = async (productId: string, amount: number, receiveNow: boolean) => {
     const token = localStorage.getItem('smartsale_session_token');
     if (!token) {
       showToast('Phiên đăng nhập đã hết hạn', 'Vui lòng đăng nhập lại trước khi nhập kho');
@@ -915,20 +915,24 @@ export function App() {
       const response = await fetch('/api/store/restock', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ productId, quantity: amount, branch: 'Chi nhánh Quận 1 - Hồ Chí Minh (Kho chính)' }),
+        body: JSON.stringify({ productId, quantity: amount, branch: 'Chi nhánh Quận 1 - Hồ Chí Minh (Kho chính)', receiveNow }),
       });
       const data = await response.json();
       if (!response.ok || !data.success) throw new Error(data.error || 'Không thể nhập kho.');
 
+      const previousStock = products.find((product) => product.id === productId)?.stock ?? 0;
       const targetProd = data.state.products.find((product: Product) => product.id === productId);
+      const productName = targetProd?.name || productId;
       setProducts(data.state.products);
       setRestockOrders(data.state.restockOrders);
       const now = new Date();
       const act: RealtimeActivity = {
         id: `act-restock-${Date.now()}`,
         type: 'restock',
-        title: 'Nhập kho thành công',
-        description: `Đã nhập +${amount} chiếc ${targetProd?.name || productId} vào kho Quận 1`,
+        title: receiveNow ? 'Nhập kho thành công' : 'Đã tạo phiếu đặt hàng',
+        description: receiveNow
+          ? `Đã nhập +${amount} chiếc ${productName} vào kho (tồn kho ${previousStock} → ${targetProd?.stock ?? previousStock + amount})`
+          : `Đặt +${amount} chiếc ${productName}, chờ nhận hàng`,
         timestamp: now.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
         createdAtMs: Date.now(),
         channel: 'Cửa hàng POS',
@@ -936,7 +940,14 @@ export function App() {
       };
       setRealtimeActivities((prev) => [act, ...prev.slice(0, 25)]);
       setLatestActivity(act);
-      showToast(`✅ Đã nhập +${amount} sản phẩm`, targetProd?.name || productId);
+      if (receiveNow) {
+        showToast(`✅ Đã nhập +${amount} sản phẩm`, `${productName}: tồn kho ${previousStock} → ${targetProd?.stock}`);
+      } else {
+        showToast(
+          `📦 Đã tạo phiếu đặt +${amount} sản phẩm`,
+          `${productName}: khi hàng về, bấm "Nhận hàng" ở mục Tồn kho & Chi nhánh để cộng tồn kho`
+        );
+      }
     } catch (error) {
       showToast('Không thể nhập kho', error instanceof Error ? error.message : 'Vui lòng thử lại');
     }
@@ -1576,20 +1587,25 @@ export function App() {
         onOpenMobileMenu={() => setIsMobileMenuOpen(true)}
         cartCount={cartTotalItemsCount}
         isDark={isDark}
+        currentUser={currentUser}
+        rolePermissions={rolePermissions}
       />
 
       {/* MODALS */}
-      {/* 1. Add / Edit Product Modal */}
-      <AddEditProductModal
-        isOpen={isAddProductModalOpen}
-        onClose={() => {
-          setIsAddProductModalOpen(false);
-          setEditingProduct(null);
-        }}
-        onSave={handleSaveProduct}
-        initialProduct={editingProduct}
-        isDark={isDark}
-      />
+      {/* 1. Add / Edit Product Modal (mount lại mỗi lần mở để form nạp đúng sản phẩm đang sửa) */}
+      {isAddProductModalOpen && (
+        <AddEditProductModal
+          isOpen={isAddProductModalOpen}
+          onClose={() => {
+            setIsAddProductModalOpen(false);
+            setEditingProduct(null);
+          }}
+          onSave={handleSaveProduct}
+          initialProduct={editingProduct}
+          existingCategories={Array.from(new Set(products.map((p) => p.category)))}
+          isDark={isDark}
+        />
+      )}
 
       {/* 2. Select / Add Customer Modal */}
       <CustomerSelectModal

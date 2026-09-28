@@ -81,28 +81,97 @@ function getGenAI(): GoogleGenAI | null {
   return aiClient;
 }
 
+// Chuỗi model Gemini theo thứ tự ưu tiên. Mỗi model có hạn mức (lượt hỏi/phút, /ngày) riêng,
+// nên khi model đầu hết lượt hoặc quá tải, hệ thống tự chuyển sang model kế tiếp.
+// Có thể đổi bằng biến môi trường: GEMINI_MODELS="gemini-3.6-flash,gemini-3.5-flash-lite"
+const DEFAULT_GEMINI_MODELS = [
+  "gemini-3.6-flash",
+  "gemini-3.7-flash",
+  "gemini-3.5-flash",
+  "gemini-flash-latest",
+  "gemini-3.5-flash-lite",
+  "gemini-3.1-flash-lite",
+  "gemini-flash-lite-latest",
+];
+const GEMINI_MODELS = (process.env.GEMINI_MODELS || "")
+  .split(",")
+  .map((m) => m.trim())
+  .filter(Boolean);
+const geminiModelChain = GEMINI_MODELS.length > 0 ? GEMINI_MODELS : DEFAULT_GEMINI_MODELS;
+
+// Model đang tạm ngưng dùng (hết lượt / quá tải) -> thời điểm được thử lại
+const geminiModelCooldowns = new Map<string, { until: number; reason: string }>();
+
+// Hạn mức theo ngày của Gemini API được đặt lại lúc 0h giờ Thái Bình Dương (Mỹ)
+function nextPacificMidnight(now: number): number {
+  const parts = Object.fromEntries(
+    new Intl.DateTimeFormat("en-US", {
+      timeZone: "America/Los_Angeles",
+      hour12: false,
+      hour: "numeric",
+      minute: "numeric",
+      second: "numeric",
+    })
+      .formatToParts(new Date(now))
+      .map((p) => [p.type, p.value])
+  );
+  const secondsSinceMidnight = (Number(parts.hour) % 24) * 3600 + Number(parts.minute) * 60 + Number(parts.second);
+  return now + (86400 - secondsSinceMidnight) * 1000;
+}
+
+function getGeminiCooldown(err: any): { until: number; reason: string } | null {
+  const status = Number(err?.status) || 0;
+  const text = String(err?.message || "");
+  const now = Date.now();
+
+  if (status === 429 || text.includes("RESOURCE_EXHAUSTED")) {
+    if (/PerDay/i.test(text)) {
+      return { until: nextPacificMidnight(now), reason: "Hết lượt hỏi trong ngày" };
+    }
+    const retryDelay = text.match(/"retryDelay":\s*"(\d+(?:\.\d+)?)s"/);
+    return { until: now + Math.ceil(retryDelay ? Number(retryDelay[1]) : 60) * 1000, reason: "Hết lượt hỏi trong phút" };
+  }
+  if (status === 404) return { until: now + 24 * 3600 * 1000, reason: "Model không khả dụng với API key này" };
+  if (status >= 500 || text.startsWith("Timeout after")) return { until: now + 60 * 1000, reason: "Model đang quá tải" };
+  return null;
+}
+
+function getGeminiStatus() {
+  const now = Date.now();
+  const models = geminiModelChain.map((model) => {
+    const cooldown = geminiModelCooldowns.get(model);
+    const blocked = !!cooldown && cooldown.until > now;
+    return {
+      model,
+      available: !blocked,
+      reason: blocked ? cooldown!.reason : null,
+      retryAt: blocked ? new Date(cooldown!.until).toISOString() : null,
+    };
+  });
+  return {
+    primaryModel: geminiModelChain[0],
+    activeModel: models.find((m) => m.available)?.model || null,
+    models,
+  };
+}
+
 async function callGeminiWithTimeout(params: {
   contents: any;
   config?: any;
   timeoutMs?: number;
-  preferModel?: string;
 }): Promise<{ text: string; modelUsed: string }> {
   const ai = getGenAI();
   if (!ai) throw new Error("GEMINI_API_KEY is not configured.");
 
-  const modelsToTry = [
-    params.preferModel || "gemini-3.6-flash",
-    "gemini-3.6-flash",
-    "gemini-3.5-flash-lite",
-    "gemini-3.8-flash",
-    "gemini-flash-latest",
-  ];
-  const uniqueModels = Array.from(new Set(modelsToTry));
   const timeoutMs = params.timeoutMs || 12000;
+  const candidates = geminiModelChain.filter((model) => (geminiModelCooldowns.get(model)?.until || 0) <= Date.now());
+  if (candidates.length === 0) {
+    throw new Error("Tất cả các model Gemini đều đã hết lượt hoặc đang quá tải.");
+  }
 
-  for (const model of uniqueModels) {
+  for (const model of candidates) {
+    let timer: any = null;
     try {
-      let timer: any = null;
       const timeoutPromise = new Promise<never>((_, reject) => {
         timer = setTimeout(() => reject(new Error(`Timeout after ${timeoutMs}ms on model ${model}`)), timeoutMs);
       });
@@ -114,17 +183,51 @@ async function callGeminiWithTimeout(params: {
       });
 
       const response: any = await Promise.race([generatePromise, timeoutPromise]);
-      if (timer) clearTimeout(timer);
       const text = response?.text || "";
       if (text) {
+        geminiModelCooldowns.delete(model);
         return { text, modelUsed: model };
       }
     } catch (err: any) {
-      console.warn(`[SmartShop AI] Model ${model} attempt failed:`, err?.message || err?.status || err);
+      const cooldown = getGeminiCooldown(err);
+      if (cooldown) {
+        geminiModelCooldowns.set(model, cooldown);
+        console.warn(
+          `[SmartShop AI] ${model}: ${cooldown.reason} -> tạm ngưng đến ${new Date(cooldown.until).toLocaleString("vi-VN")}, chuyển sang model kế tiếp.`,
+          String(err?.message || "").slice(0, 200)
+        );
+      } else {
+        console.warn(`[SmartShop AI] Model ${model} attempt failed:`, err?.message || err?.status || err);
+      }
+    } finally {
+      if (timer) clearTimeout(timer);
     }
   }
 
   throw new Error("Tất cả các model Gemini đều không phản hồi hoặc đã hết thời gian chờ.");
+}
+
+// Chuyển lịch sử chat từ frontend sang định dạng hội thoại nhiều lượt của Gemini để AI nhớ ngữ cảnh.
+// Hỗ trợ cả { sender: 'user' | 'ai' } (Trợ lý AI) và { role: 'user' | 'model' } (AI Investment Strategist).
+function buildGeminiHistory(history: unknown, currentMessage: string, maxMessages = 20) {
+  if (!Array.isArray(history)) return [];
+
+  let items = history.filter((m: any) => m && typeof m.text === "string" && m.text.trim());
+  const last: any = items[items.length - 1];
+  if (last && (last.sender === "user" || last.role === "user") && last.text === currentMessage) {
+    items = items.slice(0, -1); // Câu hỏi hiện tại được gửi riêng (kèm ảnh nếu có)
+  }
+
+  const contents: { role: "user" | "model"; parts: { text: string }[] }[] = [];
+  for (const m of items.slice(-maxMessages) as any[]) {
+    const role = m.sender === "user" || m.role === "user" ? "user" : "model";
+    if (contents.length === 0 && role === "model") continue; // Hội thoại phải bắt đầu bằng lượt của người dùng
+    const text = m.text.slice(0, 4000);
+    const prev = contents[contents.length - 1];
+    if (prev && prev.role === role) prev.parts[0].text += `\n\n${text}`;
+    else contents.push({ role, parts: [{ text }] });
+  }
+  return contents;
 }
 
 async function startServer() {
@@ -930,6 +1033,7 @@ async function startServer() {
         productId: req.body?.productId,
         quantity: req.body?.quantity,
         branch: req.body?.branch || session.user.branch,
+        receiveNow: req.body?.receiveNow === true,
       });
       res.json({ success: true, state });
     } catch (error) {
@@ -969,6 +1073,13 @@ async function startServer() {
   });
 
   // AI Chat endpoint
+  // Trạng thái chuỗi model Gemini: model đang dùng, model nào đã hết lượt và khi nào được dùng lại
+  app.get("/api/ai/status", (req, res) => {
+    const session = getAuthenticatedSession(req);
+    if (!session) return res.status(401).json({ error: "Bạn cần đăng nhập để xem trạng thái AI." });
+    res.json({ configured: !!process.env.GEMINI_API_KEY, ...getGeminiStatus() });
+  });
+
   app.post("/api/ai/chat", async (req, res) => {
     const session = getAuthenticatedSession(req);
     if (!session) return res.status(401).json({ error: "Bạn cần đăng nhập để sử dụng AI." });
@@ -1032,9 +1143,10 @@ ${orderSummary}
       }
       parts.push({ text: userText });
 
-      const contentsPayload = parts.length === 1 && typeof parts[0].text === "string" 
-        ? parts[0].text 
-        : { parts };
+      const contentsPayload = buildGeminiHistory(history, userText);
+      const lastTurn = contentsPayload[contentsPayload.length - 1];
+      if (lastTurn && lastTurn.role === "user") lastTurn.parts.push(...parts);
+      else contentsPayload.push({ role: "user", parts });
 
       const geminiResult = await callGeminiWithTimeout({
         contents: contentsPayload,
@@ -1042,8 +1154,7 @@ ${orderSummary}
           systemInstruction,
           temperature: 0.75,
         },
-        timeoutMs: 15000,
-        preferModel: "gemini-3.6-flash",
+        timeoutMs: 20000, // Gemini 3.6 Flash có bước suy luận (thinking), thường mất 7-10 giây
       });
 
       const replyText = geminiResult.text || "Tôi đã nhận được thông tin từ bạn và đang xử lý dữ liệu bán hàng.";
@@ -1222,7 +1333,6 @@ HÃY PHÂN TÍCH CHUYÊN SÂU VÀ TRẢ VỀ DUY NHẤT 1 ĐỐI TƯỢNG JSON (
             temperature: 0.3,
           },
           timeoutMs: 15000,
-          preferModel: "gemini-3.6-flash",
         });
 
         const rawText = geminiResult.text || "";
@@ -1295,7 +1405,6 @@ Hãy đưa ra câu trả lời chiến lược, súc tích, thực tế, có s�
             temperature: 0.5,
           },
           timeoutMs: 15000,
-          preferModel: "gemini-flash-latest",
         });
 
         return res.json({
@@ -1383,7 +1492,6 @@ HÃY PHÂN TÍCH VÀ TRẢ VỀ DUY NHẤT MỘT ĐỐI TƯỢNG JSON (KHÔNG K�
                 temperature: 0.1,
               },
               timeoutMs: 15000,
-              preferModel: "gemini-3.6-flash",
             });
 
             const rawText = geminiResult.text || "";

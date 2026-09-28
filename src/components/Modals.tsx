@@ -33,17 +33,22 @@ interface AddProductModalProps {
   onClose: () => void;
   onSave: (product: Partial<Product>) => void;
   initialProduct?: Product | null;
+  existingCategories?: string[];
   isDark?: boolean;
 }
+
+const NEW_CATEGORY_OPTION = '__new_category__';
 
 export const AddEditProductModal: React.FC<AddProductModalProps> = ({
   isOpen,
   onClose,
   onSave,
   initialProduct,
+  existingCategories = [],
   isDark,
 }) => {
   const { language, t, formatCurr } = useLanguage();
+  const [isNewCategory, setIsNewCategory] = useState(false);
   const [name, setName] = useState(initialProduct?.name || '');
   const [code, setCode] = useState(initialProduct?.code || `SP-${Math.floor(1000 + Math.random() * 9000)}`);
   const [category, setCategory] = useState(initialProduct?.category || (language === 'vi' ? 'Điện thoại' : 'Phones'));
@@ -58,14 +63,40 @@ export const AddEditProductModal: React.FC<AddProductModalProps> = ({
 
   if (!isOpen) return null;
 
+  // Danh mục mặc định + danh mục đã có trong kho (kể cả danh mục do người dùng tự thêm)
+  const categoryOptions = [
+    { value: language === 'vi' ? 'Điện thoại' : 'Phones', label: t.catPhones },
+    { value: language === 'vi' ? 'Laptop' : 'Laptops', label: t.catLaptops },
+    { value: language === 'vi' ? 'Tablet' : 'Tablets', label: t.catTablets },
+    { value: language === 'vi' ? 'Phụ kiện' : 'Accessories', label: t.catAccessories },
+    { value: language === 'vi' ? 'Thời trang' : 'Fashion', label: t.catFashion },
+  ];
+  for (const cat of [...existingCategories, initialProduct?.category]) {
+    const value = cat?.trim();
+    if (value && !categoryOptions.some((o) => o.value === value)) categoryOptions.push({ value, label: value });
+  }
+
+  const priceValue = Number(price) || 0;
+  const costValue = costPrice === '' ? null : Number(costPrice);
+  const costPriceError =
+    costValue === null
+      ? null
+      : costValue < 0
+      ? language === 'vi' ? 'Giá vốn không được âm.' : 'Cost price cannot be negative.'
+      : priceValue > 0 && costValue >= priceValue
+      ? language === 'vi'
+        ? `Giá vốn phải nhỏ hơn giá bán (${formatCurr(priceValue)}).`
+        : `Cost price must be lower than the selling price (${formatCurr(priceValue)}).`
+      : null;
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!name.trim()) return;
+    if (!name.trim() || !category.trim() || costPriceError) return;
 
     onSave({
       name,
       code,
-      category,
+      category: category.trim(),
       price: Number(price) || 0,
       costPrice: Number(costPrice) || Math.round((Number(price) || 0) * 0.8),
       stock: Number(stock) || 0,
@@ -123,20 +154,58 @@ export const AddEditProductModal: React.FC<AddProductModalProps> = ({
               />
             </div>
             <div>
-              <label className="font-semibold block mb-1">{t.category}</label>
-              <select
-                value={category}
-                onChange={(e) => setCategory(e.target.value)}
-                className={`w-full p-2.5 rounded-xl border outline-none cursor-pointer ${
-                  isDark ? 'bg-slate-800 border-slate-700 text-white' : 'bg-slate-50 border-slate-200'
-                }`}
-              >
-                <option value={language === 'vi' ? 'Điện thoại' : 'Phones'}>{t.catPhones}</option>
-                <option value={language === 'vi' ? 'Laptop' : 'Laptops'}>{t.catLaptops}</option>
-                <option value={language === 'vi' ? 'Tablet' : 'Tablets'}>{t.catTablets}</option>
-                <option value={language === 'vi' ? 'Phụ kiện' : 'Accessories'}>{t.catAccessories}</option>
-                <option value={language === 'vi' ? 'Thời trang' : 'Fashion'}>{t.catFashion}</option>
-              </select>
+              <div className="flex items-center justify-between mb-1">
+                <label className="font-semibold">{t.category}</label>
+                {isNewCategory && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsNewCategory(false);
+                      setCategory(categoryOptions[0].value);
+                    }}
+                    className="text-[11px] font-medium text-blue-600 dark:text-blue-400 hover:underline"
+                  >
+                    {language === 'vi' ? 'Chọn có sẵn' : 'Pick existing'}
+                  </button>
+                )}
+              </div>
+              {isNewCategory ? (
+                <input
+                  type="text"
+                  required
+                  autoFocus
+                  value={category}
+                  onChange={(e) => setCategory(e.target.value)}
+                  placeholder={language === 'vi' ? 'VD: Đồng hồ thông minh' : 'e.g. Smartwatches'}
+                  className={`w-full p-2.5 rounded-xl border outline-none ${
+                    isDark ? 'bg-slate-800 border-slate-700 text-white' : 'bg-slate-50 border-slate-200'
+                  }`}
+                />
+              ) : (
+                <select
+                  value={category}
+                  onChange={(e) => {
+                    if (e.target.value === NEW_CATEGORY_OPTION) {
+                      setIsNewCategory(true);
+                      setCategory('');
+                    } else {
+                      setCategory(e.target.value);
+                    }
+                  }}
+                  className={`w-full p-2.5 rounded-xl border outline-none cursor-pointer ${
+                    isDark ? 'bg-slate-800 border-slate-700 text-white' : 'bg-slate-50 border-slate-200'
+                  }`}
+                >
+                  {categoryOptions.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                  <option value={NEW_CATEGORY_OPTION}>
+                    {language === 'vi' ? '+ Thêm danh mục mới...' : '+ Add new category...'}
+                  </option>
+                </select>
+              )}
             </div>
           </div>
 
@@ -146,6 +215,7 @@ export const AddEditProductModal: React.FC<AddProductModalProps> = ({
               <input
                 type="number"
                 required
+                min={1}
                 value={price}
                 onChange={(e) => setPrice(e.target.value)}
                 placeholder="29590000"
@@ -158,13 +228,20 @@ export const AddEditProductModal: React.FC<AddProductModalProps> = ({
               <label className="font-semibold block mb-1">{t.costPrice}</label>
               <input
                 type="number"
+                min={0}
                 value={costPrice}
                 onChange={(e) => setCostPrice(e.target.value)}
                 placeholder="25000000"
+                aria-invalid={!!costPriceError}
                 className={`w-full p-2.5 rounded-xl border outline-none ${
-                  isDark ? 'bg-slate-800 border-slate-700 text-white' : 'bg-slate-50 border-slate-200'
+                  costPriceError
+                    ? 'border-rose-500 focus:ring-1 focus:ring-rose-500 ' + (isDark ? 'bg-slate-800 text-white' : 'bg-rose-50/40')
+                    : isDark
+                    ? 'bg-slate-800 border-slate-700 text-white'
+                    : 'bg-slate-50 border-slate-200'
                 }`}
               />
+              {costPriceError && <p className="mt-1 text-[11px] text-rose-500">{costPriceError}</p>}
             </div>
           </div>
 
@@ -219,7 +296,8 @@ export const AddEditProductModal: React.FC<AddProductModalProps> = ({
             </button>
             <button
               type="submit"
-              className="px-5 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-semibold shadow-sm shadow-blue-500/20"
+              disabled={!!costPriceError}
+              className="px-5 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-semibold shadow-sm shadow-blue-500/20 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {initialProduct ? t.saveChanges : t.addProduct}
             </button>
@@ -565,7 +643,7 @@ interface RestockModalProps {
   onClose: () => void;
   products: Product[];
   initialProductId?: string | null;
-  onConfirmRestock: (productId: string, amount: number) => void;
+  onConfirmRestock: (productId: string, amount: number, receiveNow: boolean) => void;
   isDark?: boolean;
 }
 
@@ -580,6 +658,7 @@ export const RestockModal: React.FC<RestockModalProps> = ({
   const { language, t, formatCurr } = useLanguage();
   const [selectedProdId, setSelectedProdId] = useState<string>('');
   const [amount, setAmount] = useState('20');
+  const [receiveNow, setReceiveNow] = useState(true);
   const [selectedBranch, setSelectedBranch] = useState(language === 'vi' ? 'Chi nhánh Quận 1 - Hồ Chí Minh (Kho chính)' : 'District 1 Branch - Ho Chi Minh (Main Warehouse)');
 
   useEffect(() => {
@@ -604,7 +683,7 @@ export const RestockModal: React.FC<RestockModalProps> = ({
   const handleRestock = (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedProduct) return;
-    onConfirmRestock(selectedProduct.id, parsedAmount);
+    onConfirmRestock(selectedProduct.id, parsedAmount, receiveNow);
     onClose();
   };
 
@@ -755,6 +834,52 @@ export const RestockModal: React.FC<RestockModalProps> = ({
             />
           </div>
 
+          {/* Receive mode: add stock now, or create a supplier order that is received later */}
+          <div>
+            <label className="font-semibold block mb-1.5 text-slate-700 dark:text-slate-200">
+              {language === 'vi' ? 'Hình thức nhập' : 'Restock type'}
+            </label>
+            <div className="grid grid-cols-2 gap-2">
+              {[
+                {
+                  value: true,
+                  title: language === 'vi' ? 'Hàng đã về kho' : 'Goods received',
+                  desc: selectedProduct
+                    ? language === 'vi'
+                      ? `Cộng tồn ngay: ${selectedProduct.stock} → ${selectedProduct.stock + parsedAmount}`
+                      : `Stock now: ${selectedProduct.stock} → ${selectedProduct.stock + parsedAmount}`
+                    : '',
+                },
+                {
+                  value: false,
+                  title: language === 'vi' ? 'Đặt nhà cung cấp' : 'Order from supplier',
+                  desc: language === 'vi' ? 'Tạo phiếu, cộng tồn khi bấm "Nhận hàng"' : 'Stock added when received',
+                },
+              ].map((option) => {
+                const active = receiveNow === option.value;
+                return (
+                  <button
+                    key={String(option.value)}
+                    type="button"
+                    onClick={() => setReceiveNow(option.value)}
+                    className={`p-2.5 rounded-xl border text-left transition-colors ${
+                      active
+                        ? 'border-blue-600 bg-blue-50 dark:bg-blue-950/50 ring-1 ring-blue-600'
+                        : isDark
+                        ? 'border-slate-700 bg-slate-800 hover:bg-slate-700'
+                        : 'border-slate-200 bg-slate-50 hover:bg-slate-100'
+                    }`}
+                  >
+                    <span className={`block font-bold ${active ? 'text-blue-700 dark:text-blue-300' : 'text-slate-700 dark:text-slate-200'}`}>
+                      {option.title}
+                    </span>
+                    <span className="block text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">{option.desc}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
           {/* Destination Warehouse (Single Store) */}
           <div>
             <label className="font-semibold block mb-1.5 text-slate-700 dark:text-slate-200">
@@ -810,7 +935,9 @@ export const RestockModal: React.FC<RestockModalProps> = ({
               className="px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold shadow-sm shadow-blue-500/20 flex items-center gap-1.5"
             >
               <Plus className="w-4 h-4" />
-              <span>{t.confirmRestock} (+{parsedAmount})</span>
+              <span>
+                {receiveNow ? t.confirmRestock : language === 'vi' ? 'Tạo phiếu đặt hàng' : 'Create purchase order'} (+{parsedAmount})
+              </span>
             </button>
           </div>
         </form>

@@ -1,5 +1,9 @@
 @import "tailwindcss";
 
+/* dark: theo nút Sáng/Tối của app (class .dark trên <html>), không theo chế độ tối của hệ điều hành.
+   Thiếu dòng này thì khi Windows để Dark mà app để Light, chữ dark:text-white sẽ trắng trên nền trắng. */
+@custom-variant dark (&:where(.dark, .dark *));
+
 @layer base {
   html {
     -webkit-font-smoothing: antialiased;

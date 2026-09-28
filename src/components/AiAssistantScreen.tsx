@@ -23,6 +23,19 @@ import {
 import { ChatSession, ChatMessage, Product } from '../types';
 import { useLanguage } from '../utils/i18n';
 
+interface AiModelStatus {
+  primaryModel: string;
+  activeModel: string | null;
+  models: { model: string; available: boolean; reason: string | null; retryAt: string | null }[];
+}
+
+// "gemini-3.6-flash" -> "Gemini 3.6 Flash"
+const formatModelName = (model: string) =>
+  model
+    .split('-')
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(' ');
+
 interface AiAssistantScreenProps {
   sessions: ChatSession[];
   activeSessionId: string;
@@ -56,6 +69,31 @@ export const AiAssistantScreen: React.FC<AiAssistantScreenProps> = ({
   const recognitionRef = useRef<any>(null);
 
   const activeSession = sessions.find((s) => s.id === activeSessionId) || sessions[0];
+
+  // Cập nhật model Gemini đang dùng sau mỗi lượt trả lời (server tự chuyển model khi hết lượt)
+  const [aiStatus, setAiStatus] = useState<AiModelStatus | null>(null);
+  const messageCount = activeSession?.messages.length || 0;
+  useEffect(() => {
+    fetch('/api/ai/status', {
+      headers: { Authorization: `Bearer ${localStorage.getItem('smartsale_session_token') || ''}` },
+    })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => data && setAiStatus(data))
+      .catch(() => {});
+  }, [messageCount]);
+
+  const currentModel = aiStatus?.activeModel || null;
+  const isOffline = !!aiStatus && !currentModel;
+  const isUsingFallback = !!currentModel && currentModel !== aiStatus?.primaryModel;
+  const primaryStatus = aiStatus?.models.find((m) => m.model === aiStatus.primaryModel);
+  const primaryRetryTime = primaryStatus?.retryAt
+    ? new Date(primaryStatus.retryAt).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })
+    : null;
+  const modelLabel = currentModel
+    ? formatModelName(currentModel)
+    : isOffline
+    ? language === 'vi' ? 'Chế độ cơ bản' : 'Basic mode'
+    : 'Gemini AI';
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -325,14 +363,37 @@ export const AiAssistantScreen: React.FC<AiAssistantScreenProps> = ({
         </div>
 
         {/* AI status indicator */}
-        <div className="pt-3 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between px-1 text-[11px] text-slate-400">
-          <div className="flex items-center gap-2">
-            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-            <span className="font-medium text-slate-600 dark:text-slate-300">Gemini 3.7 Flash</span>
+        <div className="pt-3 border-t border-slate-100 dark:border-slate-800 px-1 text-[11px] text-slate-400 space-y-1.5">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2 min-w-0">
+              <span
+                className={`w-2 h-2 rounded-full flex-shrink-0 ${
+                  isOffline ? 'bg-rose-500' : isUsingFallback ? 'bg-amber-500 animate-pulse' : 'bg-emerald-500 animate-pulse'
+                }`}
+              />
+              <span className="font-medium text-slate-600 dark:text-slate-300 truncate">{modelLabel}</span>
+            </div>
+            <span
+              className={`text-[10px] px-1.5 py-0.5 rounded font-semibold flex-shrink-0 ${
+                isOffline
+                  ? 'bg-rose-100 text-rose-700 dark:bg-rose-950 dark:text-rose-300'
+                  : isUsingFallback
+                  ? 'bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300'
+                  : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300'
+              }`}
+            >
+              {isOffline ? 'Offline' : isUsingFallback ? (language === 'vi' ? 'Dự phòng' : 'Fallback') : 'Online'}
+            </span>
           </div>
-          <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300 font-semibold">
-            Online
-          </span>
+          {aiStatus && primaryStatus && !primaryStatus.available && (
+            <p className="text-[10px] leading-snug text-amber-600 dark:text-amber-400">
+              {formatModelName(aiStatus.primaryModel)}: {primaryStatus.reason}
+              {primaryRetryTime ? ` (dùng lại lúc ${primaryRetryTime})` : ''}.{' '}
+              {currentModel
+                ? `Đã tự chuyển sang ${formatModelName(currentModel)}.`
+                : 'Tất cả model đều tạm hết lượt, AI trả lời ở chế độ cơ bản.'}
+            </p>
+          )}
         </div>
       </div>
 
@@ -635,7 +696,7 @@ export const AiAssistantScreen: React.FC<AiAssistantScreenProps> = ({
           </div>
 
           <p className="text-[10px] text-center text-slate-400 mt-2">
-            SmartSale AI • Gemini 3.7 Flash Engine
+            SmartSale AI • {modelLabel}
           </p>
         </div>
       </div>

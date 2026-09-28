@@ -159,6 +159,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
     },
   ];
 
+  // Chỉ hiển thị chức năng mà vai trò hiện tại được phép dùng; ẩn luôn nhóm không còn mục nào
+  const visibleNavGroups = navGroups
+    .map((group) => ({
+      ...group,
+      items: group.items.filter((item) => canUserAccessTab(currentUser, item.id, rolePermissions)),
+    }))
+    .filter((group) => group.items.length > 0);
 
   const handleItemClick = (id: MainTab, label?: string) => {
     const isAllowed = canUserAccessTab(currentUser, id, rolePermissions);
@@ -242,7 +249,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           id={isMobileDrawer ? 'sidebar-nav-scroll-mobile' : 'sidebar-nav-scroll'}
           className="flex-1 overflow-y-auto px-3 py-3 space-y-4 scrollbar-thin scrollbar-thumb-slate-200 dark:scrollbar-thumb-slate-700"
         >
-          {navGroups.map((group, gIdx) => (
+          {visibleNavGroups.map((group, gIdx) => (
             <div key={gIdx} className="space-y-1">
               {group.title && !collapsed && (
                 <h3 className="px-3 text-[11px] font-bold tracking-wider text-slate-400 dark:text-slate-500 uppercase mb-1.5">
@@ -276,9 +283,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                           ? 'justify-center p-2'
                           : 'justify-between px-3 py-2'
                       } ${
-                        !isAllowed
-                          ? 'opacity-40 hover:opacity-75 text-slate-400 dark:text-slate-500 hover:bg-slate-100/50 dark:hover:bg-slate-800/40 cursor-pointer'
-                          : isActive
+                        isActive
                           ? isDark
                             ? 'bg-slate-800 text-white font-bold border-l-4 border-white shadow-xs'
                             : 'bg-slate-100 text-slate-900 font-bold border-l-4 border-slate-900 shadow-xs'

@@ -138,12 +138,12 @@ export const PosScreen: React.FC<PosScreenProps> = ({
   const renderCartContent = () => (
     <div
       id="pos-cart-panel"
-      className={`w-full flex flex-col justify-between rounded-2xl border p-4 sm:p-5 transition-all h-full ${
+      className={`w-full flex flex-col rounded-2xl border p-4 sm:p-5 transition-all h-full ${
         isDark ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200 shadow-sm'
       }`}
     >
       {/* Header */}
-      <div>
+      <div className="flex-shrink-0">
         <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
           <div className="flex items-center gap-2">
             {/* Back button on mobile */}
@@ -221,8 +221,8 @@ export const PosScreen: React.FC<PosScreenProps> = ({
         </div>
       </div>
 
-      {/* Cart Item List */}
-      <div className="flex-1 overflow-y-auto my-3 divide-y divide-slate-100 dark:divide-slate-800 min-h-[160px] max-h-72 lg:max-h-56 pr-1">
+      {/* Cart Item List: chiếm phần còn trống, món mới nằm ngay dưới ô chọn khách và cuộn bên trong */}
+      <div className="flex-1 overflow-y-auto my-3 divide-y divide-slate-100 dark:divide-slate-800 min-h-[160px] max-h-72 lg:max-h-none pr-1">
         {cart.length === 0 ? (
           <div className="h-full flex flex-col items-center justify-center text-slate-400 dark:text-slate-300 py-8">
             <Package className="w-8 h-8 stroke-1 mb-2 opacity-50" />
@@ -239,13 +239,19 @@ export const PosScreen: React.FC<PosScreenProps> = ({
               />
 
               <div className="flex-1 min-w-0">
-                <div className="flex items-start justify-between">
-                  <p className="text-xs font-semibold text-slate-900 dark:text-white truncate">
-                    {item.product.name}
-                  </p>
+                <div className="flex items-start justify-between gap-1">
+                  <div className="min-w-0">
+                    <p className="text-sm font-semibold text-slate-900 dark:text-white truncate">
+                      {item.product.name}
+                    </p>
+                    <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                      {formatCurr(item.product.price)} / {language === 'vi' ? 'cái' : 'pc'}
+                    </p>
+                  </div>
                   <button
                     onClick={() => onRemoveFromCart(item.product.id)}
-                    className="text-slate-400 hover:text-red-500 ml-1 p-0.5"
+                    className="text-slate-400 hover:text-red-500 p-0.5 flex-shrink-0"
+                    title={language === 'vi' ? 'Xóa khỏi giỏ' : 'Remove'}
                   >
                     <Trash2 className="w-3.5 h-3.5" />
                   </button>
@@ -271,7 +277,7 @@ export const PosScreen: React.FC<PosScreenProps> = ({
                     </button>
                   </div>
 
-                  <span className="text-xs font-bold text-slate-900 dark:text-white">
+                  <span className="text-sm font-bold text-slate-900 dark:text-white">
                     {formatCurr(item.product.price * item.quantity)}
                   </span>
                 </div>
@@ -282,7 +288,7 @@ export const PosScreen: React.FC<PosScreenProps> = ({
       </div>
 
       {/* Voucher & Bill Summary */}
-      <div className="space-y-3 pt-2 border-t border-slate-100 dark:border-slate-800">
+      <div className="flex-shrink-0 space-y-3 pt-3 border-t border-slate-100 dark:border-slate-800">
         {/* Coupon input */}
         <div className="flex gap-2">
           <div className="relative flex-1">
@@ -637,7 +643,7 @@ export const PosScreen: React.FC<PosScreenProps> = ({
 
       {/* Cart View on Desktop or Mobile switched view */}
       <div
-        className={`w-full lg:w-96 flex-shrink-0 ${
+        className={`w-full lg:w-96 flex-shrink-0 lg:sticky lg:top-0 lg:self-start lg:h-[calc(100vh-8.5rem)] ${
           mobileView === 'products' ? 'hidden lg:flex' : 'flex'
         }`}
       >
